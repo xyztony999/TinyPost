@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish-tauri:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 第一期：Windows x86_64
+          - platform: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            args: "--target x86_64-pc-windows-msvc"
+          # 第一期：银河麒麟 aarch64（产出 Linux aarch64 安装包）
+          # 注意：GitHub 免费 ARM runner 对公开仓库更友好；私有仓可能需计费或改用自托管麒麟机
+          - platform: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            args: "--target aarch64-unknown-linux-gnu"
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: ${{ matrix.platform }}-${{ matrix.rust_target }}
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu-')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and upload release assets
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: TinyPost v__VERSION__
+          releaseBody: |
+            ## TinyPost ${{ github.ref_name }}
+
+            本地离线 API 客户端。安装包见下方 Assets。
+
+            ### 平台
+            - Windows x86_64
+            - Linux aarch64（适用于银河麒麟等 aarch64 环境；依赖差异请在目标机验证）
+
+            ### 说明
+            - 数据仅存本机 SQLite，无云同步
+            - 未配置代码签名；Windows 可能提示未知发布者，属预期
+          releaseDraft: true
+          prerelease: false
+          generateReleaseNotes: true
+          args: ${{ matrix.args }}
