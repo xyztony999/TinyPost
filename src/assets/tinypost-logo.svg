@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="TinyPost">
+  <rect width="128" height="128" rx="28" fill="#0f6b4c"/>
+  <!-- envelope body -->
+  <path
+    fill="none"
+    stroke="#f7fff9"
+    stroke-width="8"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    d="M30 46h52v36H30z"
+  />
+  <!-- envelope flap -->
+  <path
+    fill="none"
+    stroke="#f7fff9"
+    stroke-width="8"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    d="M30 46l26 18 26-18"
+  />
+  <!-- send arrow -->
+  <path
+    fill="#f7fff9"
+    d="M78 72h18l-1 8 16-12-16-12 1 8H78z"
+  />
+</svg>
