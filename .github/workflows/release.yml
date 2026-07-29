@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 0.1.0），留空则读取 package.json"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+
+  build-windows:
+    needs: typecheck
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build Windows x64
+        run: |
+          npm run build
+          npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: |
+            dist-installer/*.exe
+            dist-installer/*Setup*.exe
+          if-no-files-found: warn
+          retention-days: 7
+
+  build-linux-arm64:
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build AppImage (arm64)
+        run: |
+          npm run build
+          npx electron-builder --linux AppImage --arm64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-arm64
+          path: dist-installer/*.AppImage
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unpacked-arm64
+          path: dist-installer/linux-arm64-unpacked
+          retention-days: 7
+
+  deb-arm64:
+    needs: build-linux-arm64
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: unpacked-arm64
+          path: dist-installer/linux-arm64-unpacked/
+      - name: Restore executable bits
+        run: |
+          find dist-installer/linux-arm64-unpacked -maxdepth 2 -type f | while read -r f; do
+            if head -c 4 "$f" 2>/dev/null | grep -qP '^\x7fELF'; then
+              chmod +x "$f"
+            fi
+          done
+      - name: Build .deb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev fakeroot
+          bash scripts/pack-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64
+          path: dist-installer/*.deb
+          retention-days: 7
+
+  release:
+    needs: [build-windows, build-linux-arm64, deb-arm64]
+    if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: dist-installer/
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage-arm64
+          path: dist-installer/
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb-arm64
+          path: dist-installer/
+        continue-on-error: true
+      - id: version
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+      - id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+            [ -z "$VER" ] && VER=$(node -p "require('./package.json').version")
+            echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+            echo "name=v$VER" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: TinyPost ${{ steps.tag.outputs.name }}
+          body: |
+            ## TinyPost ${{ steps.tag.outputs.name }}
+
+            轻量本地 API 客户端（Electron，适配内网 / 麒麟桌面）。
+
+            ### Windows x86_64
+            安装包见 Assets 中的 `.exe`
+
+            ### 银河麒麟桌面 V10 SP3（arm64）
+            ```bash
+            sudo dpkg -i tinypost_${{ steps.version.outputs.version }}_arm64.deb
+            ```
+            或：
+            ```bash
+            chmod +x TinyPost-*.AppImage
+            ./TinyPost-*.AppImage
+            ```
+
+            数据仅存本机 SQLite，无云同步。
+          files: |
+            dist-installer/*.exe
+            dist-installer/*.AppImage
+            dist-installer/*.deb
+          draft: true
+          prerelease: false
+          generate_release_notes: true

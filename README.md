@@ -2,106 +2,99 @@
 
 轻量本地 API 客户端：不上云、可内网离线使用，数据存本机 SQLite。
 
-面向场景：
-- Postman 过重 / 依赖云协作
-- 纯 Web 客户端在无外网环境不好用
-- Windows 与信创桌面（第一期：银河麒麟 aarch64）并存
-
-## 技术栈
-
-- 桌面壳：Tauri 2
-- 前端：React + TypeScript + Vite
-- 存储：SQLite（`sqlite:tinypost.db`，本机文件）
-- HTTP：Rust `reqwest`（绕过 WebView CORS，适合内网调试）
-
-## 本机开发（Windows x86_64）
-
-### 前置依赖
-
-1. Node.js 18+
-2. Rust（rustup）
-3. Windows 上需要 [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)（MSVC）
-4. WebView2（Win10/11 一般已自带）
-
-```bash
-npm install
-npm run tauri:dev
-```
-
-打包：
-
-```bash
-npm run tauri:build
-```
-
-产物通常在 `src-tauri/target/release/bundle/`。
-
-## 第一期目标平台
+## 目标平台（第一期）
 
 | 平台 | 架构 | 说明 |
 |---|---|---|
-| Windows | x86_64 | 日常开发与主流办公机 |
-| 银河麒麟 | aarch64 | 信创内网机（鲲鹏/飞腾等） |
+| Windows | x86_64 | 日常开发 / 办公机 |
+| 银河麒麟桌面 **V10 SP3** | aarch64 | 信创内网（鲲鹏 / 飞腾） |
 
-### 银河麒麟 aarch64 构建要点
+## 技术栈
 
-建议在 **同架构的麒麟 aarch64 机器**（或对应 CI runner）上构建，避免复杂交叉编译。
+- 桌面壳：**Electron 32** + **electron-vite** + **electron-builder**
+- 前端：React + TypeScript
+- 存储：SQLite（`sql.js`，无原生模块，便于在 x86 CI 上打 arm64 包）
+- HTTP：主进程 Node `http` / `https`
 
-1. 安装依赖（不同麒麟版本包名可能略有差异）：
+打包与麒麟适配对齐已验证项目 [cc-switch-arm64-kylin](https://github.com/xyztony999/cc-switch-arm64-kylin)：
 
-```bash
-sudo apt update
-sudo apt install -y \
-  build-essential curl wget file \
-  libwebkit2gtk-4.1-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev \
-  patchelf \
-  libssl-dev
-```
+- Wayland hint
+- arm64 AppImage
+- `scripts/pack-deb.sh` 打 `.deb`（绕开跨架构 fpm）
+- 启动器默认 `--no-sandbox`
 
-2. 安装 Rust / Node，然后：
+> 曾评估 Tauri 2，因其依赖系统 WebKitGTK 4.1，与麒麟桌面 V10 SP3 不兼容，故改用 Electron。
+
+## 本机开发（Windows）
 
 ```bash
 npm install
-npm run tauri:build
+npm run dev
 ```
 
-3. 产出 Linux 安装包（deb/rpm/AppImage，取决于本机打包器），通过内网 U 盘或制品库分发。  
-   **运行期不访问外网**；首次发请求只连接用户填写的目标 API。
+Windows 打包：
 
-### 关于交叉编译
+```bash
+npm run dist:win
+# 产物在 dist-installer/
+```
 
-- Win x86_64 ↔ 麒麟 aarch64 交叉编译成本高（尤其 WebView/GTK）。
-- 第一期推荐：**两条流水线 / 两台构建机**，分别出包。
-- 龙芯 LoongArch 暂未纳入第一期。
+## 麒麟 arm64 打包
 
-## MVP 已具备
+```bash
+npm run build
+npx electron-builder --linux AppImage --arm64
+bash scripts/pack-deb.sh
+```
 
-- 发送 REST 请求（方法 / URL / Headers / Body）
+安装：
+
+```bash
+sudo dpkg -i tinypost_*_arm64.deb
+# 或
+chmod +x TinyPost-*.AppImage && ./TinyPost-*.AppImage
+```
+
+## GitHub Actions
+
+| 工作流 | 触发 | 作用 |
+|---|---|---|
+| [ci.yml](.github/workflows/ci.yml) | `master` push / PR | `typecheck` + `build` |
+| [release.yml](.github/workflows/release.yml) | `v*` 标签或手动运行 | Windows x64 + Linux arm64（AppImage/deb）→ **Draft Release** |
+
+发版步骤：
+
+1. 确认 `package.json` 版本号
+2. 合并到 `master` 后打标签并推送：
+
+```bash
+git checkout master
+git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+3. 在 Actions 查看 `Release`
+4. 打开 GitHub Releases 草稿，检查产物后 Publish
+
+## MVP 能力
+
+- REST：方法 / URL / Headers / Body
 - Auth：Bearer / Basic / API Key
-- 环境变量：`{{baseUrl}}`、`{{token}}` 等，可切换环境
-- 集合：保存/打开常用请求
-- Postman Collection v2.1 导入（文件夹会展平为「目录 / 请求」）
-- 响应状态、耗时、Body / Headers 查看
-- 请求历史写入本地 SQLite
-- 可选「允许不安全证书」以适配内网自签证书
-- Logo + 跟随系统的明/暗主题
-
-## 下一步（建议）
-
-- 多 Tab 请求
-- 简单断言 / 测试
-- cURL 导入导出
-- 便携版目录布局（绿色免安装）
-- 麒麟包自动化脚本
+- 环境变量：`{{baseUrl}}`、`{{token}}`
+- 集合保存 + Postman Collection 导入
+- 请求历史（本地 SQLite）
+- 跟随系统的明/暗主题
 
 ## 目录
 
 ```
 TinyPost/
-  src/                 前端
-  src-tauri/           Rust / Tauri
-  package.json
-  README.md
+  src/main/              Electron 主进程（HTTP + SQLite）
+  src/preload/           contextBridge
+  src/renderer/          React UI
+  src/shared/            共享类型
+  scripts/pack-deb.sh    麒麟 deb 打包
+  electron-builder.yml
+  .github/workflows/
 ```
