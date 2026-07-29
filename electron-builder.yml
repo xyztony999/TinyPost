@@ -1,0 +1,34 @@
+appId: com.tinypost.app
+productName: TinyPost
+asar: true
+directories:
+  buildResources: resources
+  output: dist-installer
+files:
+  - out/**/*
+  - package.json
+  - node_modules/sql.js/**/*
+asarUnpack:
+  - node_modules/sql.js/dist/*.wasm
+extraResources:
+  - resources/icon.png
+  - from: node_modules/sql.js/dist/sql-wasm.wasm
+    to: sql-wasm.wasm
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  target:
+    - target: AppImage
+      arch: [arm64]
+  category: Network
+  icon: resources/icon.png
+  desktop:
+    StartupWMClass: tinypost
+    Name: TinyPost
+    Comment: Lightweight local API client

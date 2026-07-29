@@ -2,9 +2,13 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（如 0.1.0），留空则读取 package.json"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -14,82 +18,155 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  publish-tauri:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # 第一期：Windows x86_64
-          - platform: windows-latest
-            rust_target: x86_64-pc-windows-msvc
-            args: "--target x86_64-pc-windows-msvc"
-          # 第一期：银河麒麟 aarch64（产出 Linux aarch64 安装包）
-          # 注意：GitHub 免费 ARM runner 对公开仓库更友好；私有仓可能需计费或改用自托管麒麟机
-          - platform: ubuntu-24.04-arm
-            rust_target: aarch64-unknown-linux-gnu
-            args: "--target aarch64-unknown-linux-gnu"
-
-    runs-on: ${{ matrix.platform }}
-
+  typecheck:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: "22"
           cache: npm
+      - run: npm ci
+      - run: npm run typecheck
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+  build-windows:
+    needs: typecheck
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          targets: ${{ matrix.rust_target }}
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-          key: ${{ matrix.platform }}-${{ matrix.rust_target }}
-
-      - name: Install Linux dependencies
-        if: startsWith(matrix.platform, 'ubuntu-')
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build Windows x64
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Build and upload release assets
-        uses: tauri-apps/tauri-action@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          npm run build
+          npx electron-builder --win --x64 --publish never
+      - uses: actions/upload-artifact@v4
         with:
-          tagName: v__VERSION__
-          releaseName: TinyPost v__VERSION__
-          releaseBody: |
-            ## TinyPost ${{ github.ref_name }}
+          name: windows-x64
+          path: |
+            dist-installer/*.exe
+            dist-installer/*Setup*.exe
+          if-no-files-found: warn
+          retention-days: 7
 
-            本地离线 API 客户端。安装包见下方 Assets。
+  build-linux-arm64:
+    needs: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Build AppImage (arm64)
+        run: |
+          npm run build
+          npx electron-builder --linux AppImage --arm64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage-arm64
+          path: dist-installer/*.AppImage
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unpacked-arm64
+          path: dist-installer/linux-arm64-unpacked
+          retention-days: 7
 
-            ### 平台
-            - Windows x86_64
-            - Linux aarch64（适用于银河麒麟等 aarch64 环境；依赖差异请在目标机验证）
+  deb-arm64:
+    needs: build-linux-arm64
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: unpacked-arm64
+          path: dist-installer/linux-arm64-unpacked/
+      - name: Restore executable bits
+        run: |
+          find dist-installer/linux-arm64-unpacked -maxdepth 2 -type f | while read -r f; do
+            if head -c 4 "$f" 2>/dev/null | grep -qP '^\x7fELF'; then
+              chmod +x "$f"
+            fi
+          done
+      - name: Build .deb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev fakeroot
+          bash scripts/pack-deb.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64
+          path: dist-installer/*.deb
+          retention-days: 7
 
-            ### 说明
-            - 数据仅存本机 SQLite，无云同步
-            - 未配置代码签名；Windows 可能提示未知发布者，属预期
-          releaseDraft: true
+  release:
+    needs: [build-windows, build-linux-arm64, deb-arm64]
+    if: (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch') && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: dist-installer/
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage-arm64
+          path: dist-installer/
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb-arm64
+          path: dist-installer/
+        continue-on-error: true
+      - id: version
+        run: |
+          VER=$(node -p "require('./package.json').version")
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+      - id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VER="${{ github.event.inputs.version }}"
+            [ -z "$VER" ] && VER=$(node -p "require('./package.json').version")
+            echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+            echo "name=v$VER" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: TinyPost ${{ steps.tag.outputs.name }}
+          body: |
+            ## TinyPost ${{ steps.tag.outputs.name }}
+
+            轻量本地 API 客户端（Electron，适配内网 / 麒麟桌面）。
+
+            ### Windows x86_64
+            安装包见 Assets 中的 `.exe`
+
+            ### 银河麒麟桌面 V10 SP3（arm64）
+            ```bash
+            sudo dpkg -i tinypost_${{ steps.version.outputs.version }}_arm64.deb
+            ```
+            或：
+            ```bash
+            chmod +x TinyPost-*.AppImage
+            ./TinyPost-*.AppImage
+            ```
+
+            数据仅存本机 SQLite，无云同步。
+          files: |
+            dist-installer/*.exe
+            dist-installer/*.AppImage
+            dist-installer/*.deb
+          draft: true
           prerelease: false
-          generateReleaseNotes: true
-          args: ${{ matrix.args }}
+          generate_release_notes: true

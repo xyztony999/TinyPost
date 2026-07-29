@@ -17,22 +17,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: "22"
           cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri -> target"
-
       - run: npm ci
-
-      - name: Typecheck frontend
-        run: npx tsc --noEmit
-
-      - name: Build Tauri (Windows)
-        run: npm run tauri build -- --target x86_64-pc-windows-msvc
+      - run: npm run typecheck
+      - name: Build
+        run: npm run build
