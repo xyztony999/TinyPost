@@ -79,15 +79,20 @@ npm run tauri:build
 ## MVP 已具备
 
 - 发送 REST 请求（方法 / URL / Headers / Body）
+- Auth：Bearer / Basic / API Key
+- 环境变量：`{{baseUrl}}`、`{{token}}` 等，可切换环境
+- 集合：保存/打开常用请求
+- Postman Collection v2.1 导入（文件夹会展平为「目录 / 请求」）
 - 响应状态、耗时、Body / Headers 查看
 - 请求历史写入本地 SQLite
 - 可选「允许不安全证书」以适配内网自签证书
+- Logo + 跟随系统的明/暗主题
 
 ## 下一步（建议）
 
-- 环境变量（`{{baseUrl}}`）
-- 集合 / 收藏请求
-- Postman Collection 导入
+- 多 Tab 请求
+- 简单断言 / 测试
+- cURL 导入导出
 - 便携版目录布局（绿色免安装）
 - 麒麟包自动化脚本
 

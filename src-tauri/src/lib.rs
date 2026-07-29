@@ -100,10 +100,11 @@ async fn http_send(payload: HttpRequestPayload) -> Result<HttpResponsePayload, S
 }
 
 fn migrations() -> Vec<Migration> {
-    vec![Migration {
-        version: 1,
-        description: "init_tinypost_schema",
-        sql: r#"
+    vec![
+        Migration {
+            version: 1,
+            description: "init_tinypost_schema",
+            sql: r#"
 CREATE TABLE IF NOT EXISTS request_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   method TEXT NOT NULL,
@@ -143,8 +144,17 @@ CREATE TABLE IF NOT EXISTS saved_requests (
   FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE SET NULL
 );
 "#,
-        kind: MigrationKind::Up,
-    }]
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "add_auth_to_saved_requests",
+            sql: r#"
+ALTER TABLE saved_requests ADD COLUMN auth TEXT NOT NULL DEFAULT '{"type":"none"}';
+"#,
+            kind: MigrationKind::Up,
+        },
+    ]
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
