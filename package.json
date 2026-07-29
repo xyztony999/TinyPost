@@ -29,6 +29,9 @@
   "dependencies": {
     "sql.js": "^1.12.0"
   },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "*"
+  },
   "devDependencies": {
     "@types/node": "^22.5.0",
     "@types/react": "^19.1.8",

@@ -26,6 +26,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Upgrade npm (optional deps fix)
+        run: npm install -g npm@11
       - run: npm ci
       - run: npm run typecheck
 
@@ -38,6 +40,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Upgrade npm (optional deps fix)
+        run: npm install -g npm@11
       - run: npm ci
       - name: Build Windows x64
         run: |
@@ -61,6 +65,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Upgrade npm (optional deps fix)
+        run: npm install -g npm@11
       - run: npm ci
       - name: Build AppImage (arm64)
         run: |
