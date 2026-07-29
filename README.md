@@ -36,6 +36,42 @@ npm run tauri:build
 
 产物通常在 `src-tauri/target/release/bundle/`。
 
+## GitHub Actions 发版
+
+仓库已配置：
+
+| 工作流 | 触发 | 作用 |
+|---|---|---|
+| `CI` | push/PR 到 `master` | Windows 上类型检查 + 打包校验 |
+| `Release` | 推送 `v*` 标签，或手动 `workflow_dispatch` | 构建并上传安装包到 GitHub Release（默认草稿） |
+
+### 发一版
+
+1. 确认 `package.json` 与 `src-tauri/tauri.conf.json` 的 `version` 一致（例如 `0.1.0`）
+2. 合并要发布的代码到 `master` 后打标签：
+
+```bash
+git checkout master
+git pull
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+3. 在 GitHub Actions 查看 `Release` 流水线
+4. 打开 Releases 里的 **draft**，检查产物后 Publish
+
+### 产物矩阵（第一期）
+
+| Runner | 目标 |
+|---|---|
+| `windows-latest` | Windows x86_64 |
+| `ubuntu-24.04-arm` | Linux aarch64（给银河麒麟 aarch64 试用） |
+
+说明：
+- Linux 包在 Ubuntu ARM 上构建，**不是**在银河麒麟本机构建；目标机需自行验证 WebKit/依赖是否匹配。更稳的信创发版可后续加自托管麒麟 runner。
+- 私有仓库使用 GitHub 托管 ARM runner 可能产生费用；若 ARM job 不可用，可把仓库设为 Public，或改为自托管。
+- 当前未配置 Windows/代码签名，安装时可能提示未知发布者。
+
 ## 第一期目标平台
 
 | 平台 | 架构 | 说明 |
