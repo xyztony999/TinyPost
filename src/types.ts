@@ -1,6 +1,29 @@
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+export type HttpMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "PATCH"
+  | "DELETE"
+  | "HEAD"
+  | "OPTIONS";
 
 export interface HeaderItem {
+  key: string;
+  value: string;
+}
+
+export type AuthType = "none" | "bearer" | "basic" | "apikey";
+
+export interface AuthConfig {
+  type: AuthType;
+  bearerToken?: string;
+  basicUsername?: string;
+  basicPassword?: string;
+  apiKeyKey?: string;
+  apiKeyValue?: string;
+}
+
+export interface VariableItem {
   key: string;
   value: string;
 }
@@ -33,4 +56,42 @@ export interface HistoryRow {
   response_body: string;
   duration_ms: number | null;
   created_at: string;
+}
+
+export interface EnvironmentRow {
+  id: number;
+  name: string;
+  variables: string;
+  is_active: number;
+  created_at: string;
+}
+
+export interface CollectionRow {
+  id: number;
+  name: string;
+  created_at: string;
+}
+
+export interface SavedRequestRow {
+  id: number;
+  collection_id: number | null;
+  name: string;
+  method: string;
+  url: string;
+  headers: string;
+  body: string;
+  auth: string;
+  created_at: string;
+}
+
+export function emptyHeader(): HeaderItem {
+  return { key: "", value: "" };
+}
+
+export function emptyVariable(): VariableItem {
+  return { key: "", value: "" };
+}
+
+export function defaultAuth(): AuthConfig {
+  return { type: "none" };
 }
