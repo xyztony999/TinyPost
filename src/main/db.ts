@@ -35,14 +35,13 @@ export async function initDb(userDataPath: string): Promise<void> {
   fs.mkdirSync(userDataPath, { recursive: true });
   dbPath = path.join(userDataPath, "tinypost.db");
 
-  const sqlJsRoot = path.dirname(require.resolve("sql.js/package.json"));
+  // sql.js >=1.13 的 exports 不包含 package.json，改从主入口解析到 dist/
+  const sqlJsDist = path.dirname(require.resolve("sql.js"));
   SQL = await initSqlJs({
     locateFile: (file) => {
       const packaged = path.join(process.resourcesPath || "", file);
       if (process.resourcesPath && fs.existsSync(packaged)) return packaged;
-      const local = path.join(sqlJsRoot, "dist", file);
-      if (fs.existsSync(local)) return local;
-      return path.join(sqlJsRoot, file);
+      return path.join(sqlJsDist, file);
     },
   });
 
