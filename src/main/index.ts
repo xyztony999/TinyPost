@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import { initDb } from "./db";
 import { registerIpc } from "./ipc";
 
-// Wayland / 麒麟适配：必须在 app.whenReady() 之前（对齐 cc-switch）
+// 麒麟 / 受限桌面：必须在 app.whenReady() 之前（对齐 cc-switch）
+// chrome-sandbox 常因无 setuid 导致非 root 无法启动；勿依赖仅 shell wrapper 传参
+app.commandLine.appendSwitch("no-sandbox");
+app.commandLine.appendSwitch("disable-setuid-sandbox");
 app.commandLine.appendSwitch("ozone-platform-hint", "auto");
 app.commandLine.appendSwitch("enable-features", "WaylandWindowDecorations");
 

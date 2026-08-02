@@ -21,7 +21,7 @@
 - Wayland hint
 - arm64 AppImage
 - `scripts/pack-deb.sh` 打 `.deb`（绕开跨架构 fpm）
-- 启动器默认 `--no-sandbox`
+- 主进程 + 启动器默认 `--no-sandbox`（避免麒麟上 chrome-sandbox 未 setuid 时必须 sudo）
 
 > 曾评估 Tauri 2，因其依赖系统 WebKitGTK 4.1，与麒麟桌面 V10 SP3 不兼容，故改用 Electron。
 
