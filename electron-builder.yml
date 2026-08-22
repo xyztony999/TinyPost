@@ -1,5 +1,6 @@
 appId: com.tinypost.app
 productName: TinyPost
+copyright: Copyright © 2026 xyztony999
 asar: true
 directories:
   buildResources: resources

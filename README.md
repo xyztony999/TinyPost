@@ -98,3 +98,7 @@ TinyPost/
   electron-builder.yml
   .github/workflows/
 ```
+
+## License
+
+[MIT](LICENSE)

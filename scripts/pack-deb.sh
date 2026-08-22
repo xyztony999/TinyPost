@@ -57,8 +57,11 @@ StartupWMClass=tinypost
 Categories=Network;Development;
 EOF
 
+mkdir -p "$STAGE/usr/share/doc/$PKG_NAME"
+cp "$ROOT/LICENSE" "$STAGE/usr/share/doc/$PKG_NAME/copyright"
+
 mkdir -p "$STAGE/DEBIAN"
-INSTALL_SIZE_KB="$(du -sk "$STAGE/opt" | awk '{print $1}')"
+INSTALL_SIZE_KB="$(du -sk "$STAGE/opt" "$STAGE/usr" | awk '{s+=$1} END {print s}')"
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PKG_NAME
 Version: $VERSION
