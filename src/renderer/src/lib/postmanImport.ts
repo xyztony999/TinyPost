@@ -131,8 +131,12 @@ function walkItems(
 
     const req = item.request;
     const headers = (req.header || [])
-      .filter((h) => h && !h.disabled && h.key)
-      .map((h) => ({ key: h.key || "", value: h.value || "" }));
+      .filter((h) => h && h.key)
+      .map((h) => ({
+        key: h.key || "",
+        value: h.value || "",
+        enabled: !h.disabled,
+      }));
 
     const body =
       req.body?.mode === "raw" || req.body?.raw

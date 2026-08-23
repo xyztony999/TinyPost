@@ -3,6 +3,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
 import type {
+  AppSettings,
   AuthConfig,
   CollectionRow,
   EnvironmentRow,
@@ -12,7 +13,7 @@ import type {
   SavedRequestRow,
   VariableItem,
 } from "../shared/types";
-import { defaultAuth } from "../shared/types";
+import { DEFAULT_SETTINGS, defaultAuth } from "../shared/types";
 
 const require = createRequire(import.meta.url);
 
@@ -93,16 +94,30 @@ CREATE TABLE IF NOT EXISTS saved_requests (
   headers TEXT NOT NULL DEFAULT '[]',
   body TEXT NOT NULL DEFAULT '',
   auth TEXT NOT NULL DEFAULT '{"type":"none"}',
+  query TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
 );
 `);
 
-  const cols = database.exec("PRAGMA table_info(saved_requests)");
-  const names = cols[0]?.values.map((row) => String(row[1])) || [];
-  if (!names.includes("auth")) {
-    database.run(
-      `ALTER TABLE saved_requests ADD COLUMN auth TEXT NOT NULL DEFAULT '{"type":"none"}'`,
-    );
+  ensureColumn("saved_requests", "auth", `TEXT NOT NULL DEFAULT '{"type":"none"}'`);
+  ensureColumn("saved_requests", "query", `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn("request_history", "auth", `TEXT NOT NULL DEFAULT '{"type":"none"}'`);
+  ensureColumn("request_history", "query", `TEXT NOT NULL DEFAULT '[]'`);
+}
+
+function tableColumns(table: string): string[] {
+  const cols = getDb().exec(`PRAGMA table_info(${table})`);
+  return cols[0]?.values.map((row) => String(row[1])) || [];
+}
+
+function ensureColumn(table: string, name: string, definition: string): void {
+  if (!tableColumns(table).includes(name)) {
+    getDb().run(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
   }
 }
 
@@ -131,12 +146,15 @@ export function saveHistory(input: {
   url: string;
   headers: HeaderItem[];
   body: string;
+  auth: AuthConfig;
+  query: string;
   response: HttpResponsePayload;
 }): void {
   run(
     `INSERT INTO request_history
-      (method, url, request_headers, request_body, status, response_headers, response_body, duration_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (method, url, request_headers, request_body, status, response_headers,
+       response_body, duration_ms, auth, query)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.method,
       input.url,
@@ -146,6 +164,8 @@ export function saveHistory(input: {
       JSON.stringify(input.response.headers),
       input.response.body,
       input.response.durationMs,
+      JSON.stringify(input.auth || defaultAuth()),
+      input.query || "[]",
     ],
   );
 }
@@ -153,7 +173,7 @@ export function saveHistory(input: {
 export function listHistory(limit = 50): HistoryRow[] {
   return queryAll<HistoryRow>(
     `SELECT id, method, url, request_headers, request_body, status,
-            response_headers, response_body, duration_ms, created_at
+            response_headers, response_body, duration_ms, created_at, auth, query
      FROM request_history
      ORDER BY id DESC
      LIMIT ?`,
@@ -239,6 +259,10 @@ export function createCollection(name: string): number {
   return run(`INSERT INTO collections (name) VALUES (?)`, [name]);
 }
 
+export function renameCollection(id: number, name: string): void {
+  run("UPDATE collections SET name = ? WHERE id = ?", [name, id]);
+}
+
 export function deleteCollection(id: number): void {
   run("DELETE FROM saved_requests WHERE collection_id = ?", [id]);
   run("DELETE FROM collections WHERE id = ?", [id]);
@@ -247,7 +271,7 @@ export function deleteCollection(id: number): void {
 export function listSavedRequests(collectionId?: number): SavedRequestRow[] {
   if (collectionId != null) {
     return queryAll<SavedRequestRow>(
-      `SELECT id, collection_id, name, method, url, headers, body, auth, created_at
+      `SELECT id, collection_id, name, method, url, headers, body, auth, query, created_at
        FROM saved_requests
        WHERE collection_id = ?
        ORDER BY id ASC`,
@@ -255,7 +279,7 @@ export function listSavedRequests(collectionId?: number): SavedRequestRow[] {
     );
   }
   return queryAll<SavedRequestRow>(
-    `SELECT id, collection_id, name, method, url, headers, body, auth, created_at
+    `SELECT id, collection_id, name, method, url, headers, body, auth, query, created_at
      FROM saved_requests
      ORDER BY id DESC`,
   );
@@ -270,14 +294,16 @@ export function saveRequest(input: {
   headers: HeaderItem[];
   body: string;
   auth: AuthConfig;
+  query?: string;
 }): number {
   const headers = JSON.stringify(input.headers);
   const auth = JSON.stringify(input.auth || defaultAuth());
+  const query = input.query || "[]";
   if (input.id) {
     run(
       `UPDATE saved_requests
        SET collection_id = ?, name = ?, method = ?, url = ?,
-           headers = ?, body = ?, auth = ?
+           headers = ?, body = ?, auth = ?, query = ?
        WHERE id = ?`,
       [
         input.collectionId,
@@ -287,6 +313,7 @@ export function saveRequest(input: {
         headers,
         input.body,
         auth,
+        query,
         input.id,
       ],
     );
@@ -294,8 +321,8 @@ export function saveRequest(input: {
   }
   return run(
     `INSERT INTO saved_requests
-      (collection_id, name, method, url, headers, body, auth)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      (collection_id, name, method, url, headers, body, auth, query)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.collectionId,
       input.name,
@@ -304,10 +331,41 @@ export function saveRequest(input: {
       headers,
       input.body,
       auth,
+      query,
     ],
   );
 }
 
+export function renameSavedRequest(id: number, name: string): void {
+  run("UPDATE saved_requests SET name = ? WHERE id = ?", [name, id]);
+}
+
 export function deleteSavedRequest(id: number): void {
   run("DELETE FROM saved_requests WHERE id = ?", [id]);
+}
+
+export function getSettings(): AppSettings {
+  const rows = queryAll<{ key: string; value: string }>(
+    "SELECT key, value FROM settings",
+  );
+  const map = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  const timeoutMs = Number(map.timeoutMs);
+  return {
+    timeoutMs:
+      Number.isFinite(timeoutMs) && timeoutMs >= 1000
+        ? timeoutMs
+        : DEFAULT_SETTINGS.timeoutMs,
+    insecure: map.insecure === "1",
+    followRedirects: map.followRedirects !== "0",
+  };
+}
+
+export function saveSettings(settings: AppSettings): void {
+  upsertSetting("timeoutMs", String(settings.timeoutMs));
+  upsertSetting("insecure", settings.insecure ? "1" : "0");
+  upsertSetting("followRedirects", settings.followRedirects ? "1" : "0");
+}
+
+function upsertSetting(key: string, value: string): void {
+  run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, value]);
 }

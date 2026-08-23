@@ -10,6 +10,13 @@ export type HttpMethod =
 export interface HeaderItem {
   key: string;
   value: string;
+  enabled?: boolean;
+}
+
+export interface QueryItem {
+  key: string;
+  value: string;
+  enabled?: boolean;
 }
 
 export type AuthType = "none" | "bearer" | "basic" | "apikey";
@@ -28,12 +35,33 @@ export interface VariableItem {
   value: string;
 }
 
+export interface AppSettings {
+  timeoutMs: number;
+  insecure: boolean;
+  followRedirects: boolean;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  timeoutMs: 60_000,
+  insecure: false,
+  followRedirects: true,
+};
+
+export interface RedirectHop {
+  status: number;
+  url: string;
+  location: string;
+}
+
 export interface HttpRequestPayload {
   method: HttpMethod | string;
   url: string;
   headers: HeaderItem[];
   body?: string;
   insecure?: boolean;
+  timeoutMs?: number;
+  followRedirects?: boolean;
+  requestId?: string;
 }
 
 export interface HttpResponsePayload {
@@ -43,6 +71,9 @@ export interface HttpResponsePayload {
   body: string;
   durationMs: number;
   error?: string | null;
+  url?: string;
+  sizeBytes?: number;
+  redirects?: RedirectHop[];
 }
 
 export interface HistoryRow {
@@ -56,6 +87,8 @@ export interface HistoryRow {
   response_body: string;
   duration_ms: number | null;
   created_at: string;
+  auth: string;
+  query: string;
 }
 
 export interface EnvironmentRow {
@@ -81,11 +114,16 @@ export interface SavedRequestRow {
   headers: string;
   body: string;
   auth: string;
+  query: string;
   created_at: string;
 }
 
 export function emptyHeader(): HeaderItem {
-  return { key: "", value: "" };
+  return { key: "", value: "", enabled: true };
+}
+
+export function emptyQuery(): QueryItem {
+  return { key: "", value: "", enabled: true };
 }
 
 export function emptyVariable(): VariableItem {
@@ -94,4 +132,8 @@ export function emptyVariable(): VariableItem {
 
 export function defaultAuth(): AuthConfig {
   return { type: "none" };
+}
+
+export function isRowEnabled(item: { enabled?: boolean }): boolean {
+  return item.enabled !== false;
 }

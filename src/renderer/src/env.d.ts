@@ -1,4 +1,5 @@
 import type {
+  AppSettings,
   AuthConfig,
   CollectionRow,
   EnvironmentRow,
@@ -12,11 +13,14 @@ import type {
 
 export interface TinyPostApi {
   httpSend: (payload: HttpRequestPayload) => Promise<HttpResponsePayload>;
+  httpCancel: (requestId?: string) => Promise<boolean>;
   saveHistory: (input: {
     method: string;
     url: string;
     headers: HeaderItem[];
     body: string;
+    auth: AuthConfig;
+    query: string;
     response: HttpResponsePayload;
   }) => Promise<void>;
   listHistory: (limit?: number) => Promise<HistoryRow[]>;
@@ -33,6 +37,7 @@ export interface TinyPostApi {
   deleteEnvironment: (id: number) => Promise<void>;
   listCollections: () => Promise<CollectionRow[]>;
   createCollection: (name: string) => Promise<number>;
+  renameCollection: (id: number, name: string) => Promise<void>;
   deleteCollection: (id: number) => Promise<void>;
   listSavedRequests: (collectionId?: number) => Promise<SavedRequestRow[]>;
   saveRequest: (input: {
@@ -44,8 +49,13 @@ export interface TinyPostApi {
     headers: HeaderItem[];
     body: string;
     auth: AuthConfig;
+    query?: string;
   }) => Promise<number>;
+  renameSavedRequest: (id: number, name: string) => Promise<void>;
   deleteSavedRequest: (id: number) => Promise<void>;
+  getSettings: () => Promise<AppSettings>;
+  saveSettings: (settings: AppSettings) => Promise<void>;
+  saveResponseBody: (body: string, suggestedName: string) => Promise<boolean>;
 }
 
 declare global {

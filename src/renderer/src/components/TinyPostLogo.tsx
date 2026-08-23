@@ -14,7 +14,7 @@ export function TinyPostLogo({ className, title = "TinyPost" }: LogoProps) {
       aria-label={title}
     >
       <title>{title}</title>
-      <rect width="128" height="128" rx="28" fill="var(--logo-bg)" />
+      <rect width="128" height="128" fill="var(--logo-bg)" />
       <path
         fill="none"
         stroke="var(--logo-fg)"

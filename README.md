@@ -13,6 +13,7 @@
 
 - 桌面壳：**Electron 32** + **electron-vite** + **electron-builder**
 - 前端：React + TypeScript
+- 打包：Vite 5 + `@rollup/wasm-node`（不用 Rollup 原生模块，麒麟 V10 / glibc 2.31 可本机 `npm run dev`）
 - 存储：SQLite（`sql.js`，无原生模块，便于在 x86 CI 上打 arm64 包）
 - HTTP：主进程 Node `http` / `https`
 

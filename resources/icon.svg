@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="TinyPost">
+  <rect width="512" height="512" rx="112" fill="#0f6b4c"/>
+  <path
+    fill="none"
+    stroke="#f7fff9"
+    stroke-width="32"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    d="M120 184h208v144H120z"
+  />
+  <path
+    fill="none"
+    stroke="#f7fff9"
+    stroke-width="32"
+    stroke-linejoin="round"
+    stroke-linecap="round"
+    d="M120 184l104 72 104-72"
+  />
+  <path
+    fill="#f7fff9"
+    d="M312 288h72l-4 32 64-48-64-48 4 32H312z"
+  />
+</svg>

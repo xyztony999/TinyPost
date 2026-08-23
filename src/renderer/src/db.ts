@@ -1,4 +1,5 @@
 import type {
+  AppSettings,
   AuthConfig,
   CollectionRow,
   EnvironmentRow,
@@ -18,6 +19,8 @@ export async function saveHistory(input: {
   url: string;
   headers: HeaderItem[];
   body: string;
+  auth: AuthConfig;
+  query: string;
   response: HttpResponsePayload;
 }): Promise<void> {
   await api().saveHistory(input);
@@ -64,6 +67,10 @@ export async function createCollection(name: string): Promise<number> {
   return api().createCollection(name);
 }
 
+export async function renameCollection(id: number, name: string): Promise<void> {
+  await api().renameCollection(id, name);
+}
+
 export async function deleteCollection(id: number): Promise<void> {
   await api().deleteCollection(id);
 }
@@ -83,10 +90,34 @@ export async function saveRequest(input: {
   headers: HeaderItem[];
   body: string;
   auth: AuthConfig;
+  query?: string;
 }): Promise<number> {
   return api().saveRequest(input);
 }
 
+export async function renameSavedRequest(id: number, name: string): Promise<void> {
+  await api().renameSavedRequest(id, name);
+}
+
 export async function deleteSavedRequest(id: number): Promise<void> {
   await api().deleteSavedRequest(id);
+}
+
+export async function getSettings(): Promise<AppSettings> {
+  return api().getSettings();
+}
+
+export async function saveSettings(settings: AppSettings): Promise<void> {
+  await api().saveSettings(settings);
+}
+
+export async function saveResponseBody(
+  body: string,
+  suggestedName: string,
+): Promise<boolean> {
+  return api().saveResponseBody(body, suggestedName);
+}
+
+export async function httpCancel(requestId?: string): Promise<boolean> {
+  return api().httpCancel(requestId);
 }
