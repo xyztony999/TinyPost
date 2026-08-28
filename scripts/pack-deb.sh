@@ -25,18 +25,21 @@ INSTALL_DIR="/opt/TinyPost"
 mkdir -p "$STAGE$INSTALL_DIR"
 cp -a "$UNPACKED/." "$STAGE$INSTALL_DIR/"
 
-find "$STAGE$INSTALL_DIR" -maxdepth 2 -type f | while read -r f; do
+# CI artifact 可能丢掉 mode；保证普通用户可读可执行整个安装树
+chmod -R a+rX "$STAGE$INSTALL_DIR"
+find "$STAGE$INSTALL_DIR" -type f | while read -r f; do
   if head -c 4 "$f" 2>/dev/null | grep -qP '^\x7fELF'; then
-    chmod +x "$f"
+    chmod a+x "$f"
   fi
 done
 
 mkdir -p "$STAGE/usr/bin"
 cat > "$STAGE/usr/bin/tinypost" <<EOF
 #!/bin/sh
-exec /opt/TinyPost/tinypost --no-sandbox "\$@"
+# --no-sandbox：麒麟等环境 chrome-sandbox 常无法 setuid；主进程也会再设一次
+exec /opt/TinyPost/tinypost --no-sandbox --disable-setuid-sandbox "\$@"
 EOF
-chmod +x "$STAGE/usr/bin/tinypost"
+chmod 755 "$STAGE/usr/bin/tinypost"
 
 ICON_SRC="$ROOT/resources/icon.png"
 if [[ -f "$ICON_SRC" ]]; then
@@ -81,9 +84,17 @@ EOF
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
+# 保证非 root 用户可启动（勿出现 700/600 导致必须 sudo）
+chmod -R a+rX /opt/TinyPost 2>/dev/null || true
 if [ -f /opt/TinyPost/chrome-sandbox ]; then
   chown root:root /opt/TinyPost/chrome-sandbox || true
   chmod 4755 /opt/TinyPost/chrome-sandbox || true
+fi
+if [ -f /opt/TinyPost/tinypost ]; then
+  chmod 755 /opt/TinyPost/tinypost || true
+fi
+if [ -f /usr/bin/tinypost ]; then
+  chmod 755 /usr/bin/tinypost || true
 fi
 update-desktop-database -q /usr/share/applications || true
 gtk-update-icon-cache -q -t /usr/share/icons/hicolor 2>/dev/null || true
