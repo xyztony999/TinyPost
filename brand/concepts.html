@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>TinyPost logo concepts</title>
+  <style>
+    :root { color-scheme: light; }
+    body {
+      margin: 0;
+      padding: 40px 32px 64px;
+      background: #e7e2d8;
+      color: #1f2a24;
+      font-family: system-ui, "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    .lead { margin: 0 0 28px; max-width: 640px; color: #5f6b63; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .card { background: #fffcf7; border-radius: 16px; padding: 16px 16px 14px; }
+    .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .stage { border-radius: 12px; min-height: 120px; display: flex; align-items: center; justify-content: center; padding: 12px; }
+    .stage.light { background: #f3f1ec; }
+    .stage.dark { background: #121816; }
+    .meta { margin-top: 12px; }
+    .meta b { font-size: 16px; }
+    .meta p { margin: 4px 0 0; color: #5f6b63; font-size: 13px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>TinyPost 标志草案</h1>
+  <p class="lead">从代码读到的品牌：轻量本地 API 客户端，不上云，数据留在本机，给内网和信创桌面用。下面八个方向都不用信封，也不用现有的字母 P。</p>
+  <div class="grid">
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="端口">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c"/>
+              <rect x="16" y="36" width="28" height="28" rx="7" fill="#f7fff9"/>
+              <circle cx="64" cy="50" r="20" fill="none" stroke="#f7fff9" stroke-width="12"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="端口">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#147a56"/>
+              <rect x="16" y="36" width="28" height="28" rx="7" fill="#f7fff9"/>
+              <circle cx="64" cy="50" r="20" fill="none" stroke="#f7fff9" stroke-width="12"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>1 端口</b><p>左边是本机，右边是一个空心端口。请求从这里发出，但不画箭头。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="斜杠">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#1f2a24"/>
+              <path d="M32 70 L68 30" fill="none" stroke="#3da87a" stroke-width="16" stroke-linecap="round"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="斜杠">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#e8f0ea"/>
+              <path d="M32 70 L68 30" fill="none" stroke="#0f6b4c" stroke-width="16" stroke-linecap="round"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>2 斜杠</b><p>一条路径。图标就是 URL 里的那个 /，给 API 工具用。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="载荷">
+            <g transform="translate(10,10)" fill="none" stroke="#f7fff9" stroke-width="8" stroke-linecap="round">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c" stroke="none"/>
+              <path d="M38 24c-12 0-14 10-14 16 0 8-8 10-8 10s8 2 8 10c0 6 2 16 14 16"/>
+              <path d="M62 24c12 0 14 10 14 16 0 8 8 10 8 10s-8 2-8 10c0 6-2 16-14 16"/>
+              <rect x="44" y="44" width="12" height="12" rx="3" fill="#f7fff9" stroke="none"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="载荷">
+            <g transform="translate(10,10)" fill="none" stroke="#f7fff9" stroke-width="8" stroke-linecap="round">
+              <rect width="100" height="100" rx="22" fill="#147a56" stroke="none"/>
+              <path d="M38 24c-12 0-14 10-14 16 0 8-8 10-8 10s8 2 8 10c0 6 2 16 14 16"/>
+              <path d="M62 24c12 0 14 10 14 16 0 8 8 10 8 10s-8 2-8 10c0 6-2 16-14 16"/>
+              <rect x="44" y="44" width="12" height="12" rx="3" fill="#f7fff9" stroke="none"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>3 载荷</b><p>花括号夹着一小块请求体。说的是你正在调试的那份 JSON。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="字标">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c"/>
+              <text x="50" y="64" text-anchor="middle" font-family="system-ui, sans-serif" font-size="40" font-weight="800" fill="#f7fff9">tp</text>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="字标">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#e8f0ea"/>
+              <text x="50" y="64" text-anchor="middle" font-family="system-ui, sans-serif" font-size="40" font-weight="800" fill="#0f6b4c">tp</text>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>4 字标</b><p>任务栏里只放 tp 两个字母，全称留在旁边。不画符号。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="界内">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c"/>
+              <circle cx="52" cy="50" r="28" fill="none" stroke="#f7fff9" stroke-width="8"/>
+              <rect x="34" y="40" width="16" height="16" rx="4" fill="#f7fff9"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="界内">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#1a221e"/>
+              <circle cx="52" cy="50" r="28" fill="none" stroke="#3da87a" stroke-width="8"/>
+              <rect x="34" y="40" width="16" height="16" rx="4" fill="#f7fff9"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>5 界内</b><p>圆是内网边界，里面的方块是这台电脑。数据不出圈。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="来回">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c"/>
+              <rect x="28" y="34" width="16" height="36" rx="8" fill="#f7fff9"/>
+              <rect x="56" y="22" width="16" height="56" rx="8" fill="#f7fff9"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="来回">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#147a56"/>
+              <rect x="28" y="34" width="16" height="36" rx="8" fill="#f7fff9"/>
+              <rect x="56" y="22" width="16" height="56" rx="8" fill="#f7fff9"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>6 来回</b><p>两根竖条，一短一长。短的是请求，长的是响应。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="回路">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c"/>
+              <path d="M72 30 H40 a14 14 0 0 0-14 14 v20 a14 14 0 0 0 14 14 H72" fill="none" stroke="#f7fff9" stroke-width="10" stroke-linecap="round"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="回路">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#1a221e"/>
+              <path d="M72 30 H40 a14 14 0 0 0-14 14 v20 a14 14 0 0 0 14 14 H72" fill="none" stroke="#3da87a" stroke-width="10" stroke-linecap="round"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>7 回路</b><p>一条开口的线，在本机绕一圈就停住。对应不上云。</p></div>
+    </article>
+
+    <article class="card">
+      <div class="pair">
+        <div class="stage light">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="状态">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#0f6b4c"/>
+              <rect x="18" y="43" width="42" height="14" rx="7" fill="#f7fff9"/>
+              <circle cx="76" cy="50" r="10" fill="#f7fff9"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#1f2a24">TinyPost</text>
+          </svg>
+        </div>
+        <div class="stage dark">
+          <svg viewBox="0 0 400 120" width="280" role="img" aria-label="状态">
+            <g transform="translate(10,10)">
+              <rect width="100" height="100" rx="22" fill="#147a56"/>
+              <rect x="18" y="43" width="42" height="14" rx="7" fill="#f7fff9"/>
+              <circle cx="76" cy="50" r="10" fill="#f7fff9"/>
+            </g>
+            <text x="128" y="74" font-family="system-ui, sans-serif" font-size="40" font-weight="750" fill="#e8f0ea">TinyPost</text>
+          </svg>
+        </div>
+      </div>
+      <div class="meta"><b>8 状态</b><p>一行请求加一个状态点。小尺寸里也还是「发出去了」。</p></div>
+    </article>
+
+  </div>
+</body>
+</html>

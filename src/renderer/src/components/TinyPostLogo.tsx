@@ -3,7 +3,7 @@ type LogoProps = {
   title?: string;
 };
 
-/** TinyPost mark: envelope + send arrow */
+/** TinyPost mark: a path slash, the / in a URL. */
 export function TinyPostLogo({ className, title = "TinyPost" }: LogoProps) {
   return (
     <svg
@@ -16,22 +16,12 @@ export function TinyPostLogo({ className, title = "TinyPost" }: LogoProps) {
       <title>{title}</title>
       <rect width="128" height="128" fill="var(--logo-bg)" />
       <path
+        d="M41 90 87 38"
         fill="none"
         stroke="var(--logo-fg)"
-        strokeWidth="8"
-        strokeLinejoin="round"
+        strokeWidth="20"
         strokeLinecap="round"
-        d="M30 46h52v36H30z"
       />
-      <path
-        fill="none"
-        stroke="var(--logo-fg)"
-        strokeWidth="8"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        d="M30 46l26 18 26-18"
-      />
-      <path fill="var(--logo-fg)" d="M78 72h18l-1 8 16-12-16-12 1 8H78z" />
     </svg>
   );
 }

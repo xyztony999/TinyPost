@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" role="img" aria-label="TinyPost">
+  <g id="icon" transform="translate(10,10)">
+    <rect width="100" height="100" rx="22" fill="#ffffff"/>
+    <path d="M32 70 68 30" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round"/>
+  </g>
+  <g id="wordmark">
+    <text x="128" y="74" font-family="system-ui, -apple-system, sans-serif" font-size="40" font-weight="750" fill="#ffffff">TinyPost</text>
+  </g>
+</svg>
