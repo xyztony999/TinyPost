@@ -23,6 +23,7 @@ import {
   restoreDatabase,
   saveHistory,
   saveRequest,
+  saveBinaryResponse,
   saveResponseBody,
   saveSettings,
   saveTextFile,
@@ -30,6 +31,16 @@ import {
   upsertEnvironment,
 } from "./db";
 import { applyAuth, parseAuthJson } from "./lib/auth";
+import { binaryHistoryNote, extensionForContentType } from "@shared/contentType";
+import {
+  cookieHeaderValue,
+  emptyCookieJar,
+  emptyStoredCookie,
+  mergeSetCookies,
+  parseCookieJar,
+  type CookieJar,
+  type StoredCookie,
+} from "@shared/cookies";
 import { looksLikeJson } from "./lib/format";
 import { parseImportJson } from "./lib/importFile";
 import {
@@ -48,9 +59,11 @@ import { PORTABLE_VERSION } from "@shared/portable";
 import {
   compactExtractors,
   compactFormFields,
+  compactUrlEncodedFields,
   parseRequestMeta,
   serializeRequestMeta,
 } from "@shared/requestMeta";
+import { encodeUrlEncoded } from "@shared/urlencoded";
 import { looksLikeXml } from "@shared/xml";
 import type {
   AuthConfig,
@@ -68,6 +81,7 @@ import type {
   SavedRequestRow,
   TlsConfig,
   TlsRequestConfig,
+  UrlEncodedField,
   VariableItem,
 } from "@shared/types";
 import {
@@ -77,6 +91,7 @@ import {
   emptyFormField,
   emptyHeader,
   emptyTls,
+  emptyUrlEncodedField,
   emptyVariable,
   isRowEnabled,
 } from "@shared/types";
@@ -155,6 +170,33 @@ function persistExtractors(next: ExtractRule[]): ExtractRule[] {
   return persistList(next, (item) => Boolean(item.path || item.variable), emptyExtractRule);
 }
 
+function persistUrlEncoded(next: UrlEncodedField[]): UrlEncodedField[] {
+  return persistList(next, (item) => Boolean(item.key || item.value), emptyUrlEncodedField);
+}
+
+function persistCookieRows(next: StoredCookie[]): StoredCookie[] {
+  return persistList(next, (item) => Boolean(item.name || item.value), emptyStoredCookie);
+}
+
+function editorJar(jar: CookieJar): CookieJar {
+  return { enabled: jar.enabled !== false, items: persistCookieRows(jar.items) };
+}
+
+function savedJar(jar: CookieJar): CookieJar {
+  return {
+    enabled: jar.enabled !== false,
+    items: jar.items
+      .filter((item) => item.name.trim())
+      .map((item) => ({
+        ...item,
+        name: item.name.trim(),
+        domain: item.domain.trim().toLowerCase(),
+        path: item.path.trim() || "/",
+        hostOnly: item.domain.trim() ? item.hostOnly : true,
+      })),
+  };
+}
+
 function App() {
   const [method, setMethod] = useState<HttpMethod>("GET");
   const [url, setUrl] = useState("{{baseUrl}}/api/health");
@@ -166,6 +208,7 @@ function App() {
   const [body, setBody] = useState("");
   const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
   const [formFields, setFormFields] = useState<FormField[]>([emptyFormField()]);
+  const [urlencodedFields, setUrlEncodedFields] = useState<UrlEncodedField[]>([emptyUrlEncodedField()]);
   const [extractors, setExtractors] = useState<ExtractRule[]>([emptyExtractRule()]);
   const [auth, setAuth] = useState<AuthConfig>(defaultAuth());
   const [insecure, setInsecure] = useState(DEFAULT_SETTINGS.insecure);
@@ -193,6 +236,7 @@ function App() {
   const [envName, setEnvName] = useState("");
   const [envVars, setEnvVars] = useState<VariableItem[]>([emptyVariable()]);
   const [envTls, setEnvTls] = useState<TlsConfig>(emptyTls());
+  const [envCookies, setEnvCookies] = useState<CookieJar>(emptyCookieJar());
   const [envPassphrase, setEnvPassphrase] = useState("");
   const [tlsPassphrases, setTlsPassphrases] = useState<Record<number, string>>({});
   const [showCurlImport, setShowCurlImport] = useState(false);
@@ -334,6 +378,19 @@ function App() {
     });
   }
 
+  function updateUrlEncodedField(index: number, patch: Partial<UrlEncodedField>) {
+    setUrlEncodedFields((prev) =>
+      persistUrlEncoded(prev.map((item, i) => (i === index ? { ...item, ...patch } : item))),
+    );
+  }
+
+  function removeUrlEncodedField(index: number) {
+    setUrlEncodedFields((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length ? persistUrlEncoded(next) : [emptyUrlEncodedField()];
+    });
+  }
+
   function updateExtractor(index: number, patch: Partial<ExtractRule>) {
     setExtractors((prev) =>
       persistExtractors(prev.map((item, i) => (i === index ? { ...item, ...patch } : item))),
@@ -396,6 +453,9 @@ function App() {
     const meta = parseRequestMeta(input.meta);
     setBodyMode(meta.bodyMode);
     setFormFields(meta.formFields.length ? persistFormFields(meta.formFields) : [emptyFormField()]);
+    setUrlEncodedFields(
+      meta.urlencodedFields.length ? persistUrlEncoded(meta.urlencodedFields) : [emptyUrlEncodedField()],
+    );
     setExtractors(meta.extractors.length ? persistExtractors(meta.extractors) : [emptyExtractRule()]);
     setAuth(input.auth || defaultAuth());
     setResponse(input.response ?? null);
@@ -452,6 +512,7 @@ function App() {
       meta: serializeRequestMeta({
         bodyMode,
         formFields: compactFormFields(formFields),
+        urlencodedFields: compactUrlEncodedFields(urlencodedFields),
         extractors: compactExtractors(extractors),
       }),
     };
@@ -484,6 +545,15 @@ function App() {
               contentType: field.contentType
                 ? substituteVars(field.contentType, activeVars)
                 : field.contentType,
+            })),
+      urlencodedFields: skipBody
+        ? []
+        : urlencodedFields
+            .filter((field) => isRowEnabled(field) && field.key.trim())
+            .map((field) => ({
+              key: substituteVars(field.key, activeVars),
+              value: substituteVars(field.value, activeVars),
+              enabled: true,
             })),
     });
   }
@@ -563,7 +633,23 @@ function App() {
     }));
     const resolvedBody = substituteVars(body, activeVars);
     const finalHeaders = applyAuth(resolvedHeaders, auth, activeVars);
+    const jar = activeEnv ? parseCookieJar(activeEnv.cookies) : emptyCookieJar();
+    if (jar.enabled && !finalHeaders.some((header) => header.key.toLowerCase() === "cookie")) {
+      const cookie = cookieHeaderValue(jar, resolvedUrl);
+      if (cookie) finalHeaders.push({ key: "Cookie", value: cookie, enabled: true });
+    }
     const sendMultipart = bodyMode === "form-data" && method !== "GET" && method !== "HEAD";
+    const sendUrlEncoded = bodyMode === "urlencoded" && method !== "GET" && method !== "HEAD";
+    const encodedBody = sendUrlEncoded
+      ? encodeUrlEncoded(
+          urlencodedFields
+            .filter((field) => isRowEnabled(field) && (field.key.trim() || field.value.trim()))
+            .map((field) => ({
+              key: substituteVars(field.key, activeVars),
+              value: substituteVars(field.value, activeVars),
+            })),
+        )
+      : undefined;
     const multipart: MultipartPartPayload[] | undefined = sendMultipart
       ? formFields
           .filter((field) => isRowEnabled(field) && field.key.trim())
@@ -581,8 +667,14 @@ function App() {
         method,
         url: resolvedUrl,
         headers: finalHeaders,
-        body: method === "GET" || method === "HEAD" || sendMultipart ? undefined : resolvedBody,
+        body:
+          method === "GET" || method === "HEAD" || sendMultipart
+            ? undefined
+            : sendUrlEncoded
+              ? encodedBody
+              : resolvedBody,
         multipart: multipart && multipart.length > 0 ? multipart : undefined,
+        urlencoded: sendUrlEncoded,
         tls: activeTlsPayload(),
         insecure,
         timeoutMs,
@@ -593,9 +685,35 @@ function App() {
       setResponse(result);
       setResponseTab("body");
       const payload = composerPayload();
-      await saveHistory({ ...payload, response: result });
+      const historyResponse = result.binary
+        ? {
+            ...result,
+            body: binaryHistoryNote(result.contentType, result.sizeBytes ?? 0),
+            binary: false,
+            setCookies: undefined,
+          }
+        : result;
+      await saveHistory({ ...payload, response: historyResponse });
       setHistory(await listHistory());
-      if (result.status >= 200 && result.status < 300) {
+      if (jar.enabled && result.setCookies?.length && activeEnv) {
+        const nextJar = mergeSetCookies(jar, result.setCookies);
+        await upsertEnvironment({
+          id: activeEnv.id,
+          name: activeEnv.name,
+          variables: parseVariablesJson(activeEnv.variables),
+          tls: parseTls(activeEnv.tls),
+          cookies: nextJar,
+        });
+        const envs = await ensureDefaultEnvironment();
+        setEnvironments(envs);
+        if (showEnvEditor && editingEnvId === activeEnv.id) {
+          setEnvCookies({
+            ...nextJar,
+            items: persistCookieRows(nextJar.items),
+          });
+        }
+      }
+      if (result.status >= 200 && result.status < 300 && !result.binary) {
         const rules = compactExtractors(extractors);
         if (rules.length > 0) {
           const hits = extractByRules(result.body, rules);
@@ -632,6 +750,7 @@ function App() {
       const vars = parseVariablesJson(env.variables);
       setEnvVars(vars.length ? [...vars, emptyVariable()] : [emptyVariable()]);
       setEnvTls(parseTls(env.tls));
+      setEnvCookies(editorJar(parseCookieJar(env.cookies)));
       setEnvPassphrase(tlsPassphrases[env.id] || "");
     } else {
       setEditingEnvId(null);
@@ -642,6 +761,7 @@ function App() {
         emptyVariable(),
       ]);
       setEnvTls(emptyTls());
+      setEnvCookies(editorJar(emptyCookieJar()));
       setEnvPassphrase("");
     }
     setShowEnvEditor(true);
@@ -659,6 +779,7 @@ function App() {
       name,
       variables,
       tls: envTls,
+      cookies: savedJar(envCookies),
       makeActive: true,
     });
     setTlsPassphrases((prev) => ({ ...prev, [id]: envPassphrase }));
@@ -782,14 +903,16 @@ function App() {
     variables: VariableItem[],
     tls: TlsConfig = emptyTls(),
     makeActive = false,
+    cookies: CookieJar = emptyCookieJar(),
   ) {
     try {
-      return await upsertEnvironment({ name, variables, tls, makeActive });
+      return await upsertEnvironment({ name, variables, tls, cookies, makeActive });
     } catch {
       return await upsertEnvironment({
         name: `${name} ${Date.now()}`,
         variables,
         tls,
+        cookies,
         makeActive,
       });
     }
@@ -811,6 +934,7 @@ function App() {
         meta: serializeRequestMeta({
           bodyMode: req.bodyMode || "raw",
           formFields: req.formFields || [],
+          urlencodedFields: req.urlencodedFields || [],
           extractors: req.extractors || [],
         }),
       });
@@ -824,7 +948,8 @@ function App() {
       const imported = parseImportJson(text);
       if (imported.type === "postman-environment" || imported.type === "environment") {
         const tls = imported.type === "environment" ? imported.data.tls : emptyTls();
-        await saveNamedEnvironment(imported.data.name, imported.data.variables, tls, false);
+        const cookies = imported.type === "environment" ? imported.data.cookies : emptyCookieJar();
+        await saveNamedEnvironment(imported.data.name, imported.data.variables, tls, false, cookies);
         await refreshAll();
         showToast(`已导入环境「${imported.data.name}」`);
         return;
@@ -839,7 +964,7 @@ function App() {
           await importRequestList(collection.name, collection.requests);
         }
         for (const env of imported.data.environments) {
-          const id = await saveNamedEnvironment(env.name, env.variables, env.tls, false);
+          const id = await saveNamedEnvironment(env.name, env.variables, env.tls, false, env.cookies);
           if (env.isActive) await setActiveEnvironment(id);
         }
         if (imported.data.settings) {
@@ -867,6 +992,7 @@ function App() {
               query: [],
               bodyMode: "raw" as const,
               formFields: [],
+              urlencodedFields: [],
               extractors: [],
             }));
       const collectionId = await importRequestList(collectionName, requests);
@@ -901,6 +1027,7 @@ function App() {
           query,
           bodyMode: meta.bodyMode,
           formFields: meta.formFields,
+          urlencodedFields: meta.urlencodedFields,
           extractors: meta.extractors,
         };
       });
@@ -925,6 +1052,7 @@ function App() {
           name,
           variables: envVars.filter((item) => item.key.trim()),
           tls: envTls,
+          cookies: savedJar(envCookies),
         },
         null,
         2,
@@ -992,13 +1120,14 @@ function App() {
         meta: serializeRequestMeta({
           bodyMode: parsed.bodyMode,
           formFields: parsed.formFields,
+          urlencodedFields: parsed.urlencodedFields,
           extractors: compactExtractors(extractors),
         }),
         saved:
           currentSavedId != null
             ? { id: currentSavedId, collectionId: currentCollectionId, name: currentSavedName }
             : null,
-        tab: parsed.bodyMode === "form-data" || parsed.body ? "body" : "headers",
+        tab: parsed.bodyMode !== "raw" || parsed.body ? "body" : "headers",
       });
       setShowCurlImport(false);
       showToast(parsed.insecure ? "已导入 cURL，并允许不安全证书" : "已导入 cURL");
@@ -1045,8 +1174,18 @@ function App() {
     if (hit?.ok) showToast(`已写入 ${hit.variable}`);
   }
 
-  async function onSaveResponseFile(text: string) {
+  async function onSaveResponseFile() {
     if (!response) return;
+    if (response.binary) {
+      const ext = extensionForContentType(response.contentType);
+      const saved = await saveBinaryResponse(
+        COMPOSER_REQUEST_ID,
+        `tinypost-${response.status}-${Date.now()}.${ext}`,
+      );
+      showToast(saved ? "已保存原始响应" : "已取消保存");
+      return;
+    }
+    const text = response.body || "";
     const ext = looksLikeJson(text) ? "json" : looksLikeXml(text) ? "xml" : "txt";
     const saved = await saveResponseBody(text, `tinypost-${response.status}-${Date.now()}.${ext}`);
     showToast(saved ? "已保存到文件" : "已取消保存");
@@ -1175,6 +1314,7 @@ function App() {
             body={body}
             bodyMode={bodyMode}
             formFields={formFields}
+            urlencodedFields={urlencodedFields}
             extractors={extractors}
             bodyDisabled={method === "GET" || method === "HEAD"}
             onMethod={setMethod}
@@ -1196,6 +1336,8 @@ function App() {
             onUpdateFormField={updateFormField}
             onRemoveFormField={removeFormField}
             onPickFormFile={(index) => void onPickFormFile(index)}
+            onUpdateUrlEncoded={updateUrlEncodedField}
+            onRemoveUrlEncoded={removeUrlEncodedField}
             onUpdateExtractor={updateExtractor}
             onRemoveExtractor={removeExtractor}
           />
@@ -1211,7 +1353,7 @@ function App() {
             onTab={setResponseTab}
             onCopy={(text) => void copyText(text)}
             onCopyCurl={() => void copyText(resolvedCurl(), "已复制 cURL")}
-            onSaveFile={(text) => void onSaveResponseFile(text)}
+            onSaveFile={() => void onSaveResponseFile()}
             onExtract={(path, variable) => void onManualExtract(path, variable)}
           />
         </main>
@@ -1223,6 +1365,7 @@ function App() {
           name={envName}
           vars={envVars}
           tls={envTls}
+          cookies={envCookies}
           passphrase={envPassphrase}
           onName={setEnvName}
           onVar={updateEnvVar}
@@ -1233,6 +1376,20 @@ function App() {
             })
           }
           onTls={(patch) => setEnvTls((prev) => ({ ...prev, ...patch }))}
+          onCookiesEnabled={(enabled) => setEnvCookies((prev) => ({ ...prev, enabled }))}
+          onCookie={(index, patch) =>
+            setEnvCookies((prev) => ({
+              ...prev,
+              items: persistCookieRows(prev.items.map((item, i) => (i === index ? { ...item, ...patch } : item))),
+            }))
+          }
+          onRemoveCookie={(index) =>
+            setEnvCookies((prev) => {
+              const next = prev.items.filter((_, i) => i !== index);
+              return { ...prev, items: next.length ? persistCookieRows(next) : [emptyStoredCookie()] };
+            })
+          }
+          onClearCookies={() => setEnvCookies((prev) => ({ ...prev, items: [emptyStoredCookie()] }))}
           onPassphrase={setEnvPassphrase}
           onPickTls={(field) => void onPickTls(field)}
           onClose={() => setShowEnvEditor(false)}

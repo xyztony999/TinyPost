@@ -1,6 +1,15 @@
 import { CodeEditor } from "./CodeEditor";
 import { editorLanguage } from "../lib/format";
-import type { AuthConfig, BodyMode, ExtractRule, FormField, HeaderItem, HttpMethod, QueryItem } from "@shared/types";
+import type {
+  AuthConfig,
+  BodyMode,
+  ExtractRule,
+  FormField,
+  HeaderItem,
+  HttpMethod,
+  QueryItem,
+  UrlEncodedField,
+} from "@shared/types";
 import { isRowEnabled } from "@shared/types";
 
 export const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
@@ -20,6 +29,7 @@ interface RequestEditorProps {
   body: string;
   bodyMode: BodyMode;
   formFields: FormField[];
+  urlencodedFields: UrlEncodedField[];
   extractors: ExtractRule[];
   bodyDisabled: boolean;
   onMethod: (method: HttpMethod) => void;
@@ -41,6 +51,8 @@ interface RequestEditorProps {
   onUpdateFormField: (index: number, patch: Partial<FormField>) => void;
   onRemoveFormField: (index: number) => void;
   onPickFormFile: (index: number) => void;
+  onUpdateUrlEncoded: (index: number, patch: Partial<UrlEncodedField>) => void;
+  onRemoveUrlEncoded: (index: number) => void;
   onUpdateExtractor: (index: number, patch: Partial<ExtractRule>) => void;
   onRemoveExtractor: (index: number) => void;
 }
@@ -283,6 +295,13 @@ export function RequestEditor(props: RequestEditorProps) {
             >
               form-data
             </button>
+            <button
+              type="button"
+              className={props.bodyMode === "urlencoded" ? "tab active" : "tab"}
+              onClick={() => props.onBodyMode("urlencoded")}
+            >
+              urlencoded
+            </button>
           </div>
           {props.bodyMode === "raw" ? (
             <CodeEditor
@@ -291,6 +310,41 @@ export function RequestEditor(props: RequestEditorProps) {
               readOnly={props.bodyDisabled}
               language={editorLanguage(props.body)}
             />
+          ) : props.bodyMode === "urlencoded" ? (
+            <div className="form-fields">
+              <p className="empty">发送时按 application/x-www-form-urlencoded 编码，并覆盖手写的 Content-Type。</p>
+              {props.urlencodedFields.map((field, index) => (
+                <div className="form-field" key={index}>
+                  <input
+                    type="checkbox"
+                    checked={isRowEnabled(field)}
+                    disabled={props.bodyDisabled}
+                    onChange={(e) => props.onUpdateUrlEncoded(index, { enabled: e.target.checked })}
+                    aria-label="启用表单字段"
+                  />
+                  <input
+                    placeholder="字段名"
+                    value={field.key}
+                    disabled={props.bodyDisabled}
+                    onChange={(e) => props.onUpdateUrlEncoded(index, { key: e.target.value })}
+                  />
+                  <input
+                    placeholder="值，可用 {{var}}"
+                    value={field.value}
+                    disabled={props.bodyDisabled}
+                    onChange={(e) => props.onUpdateUrlEncoded(index, { value: e.target.value })}
+                  />
+                  <button
+                    type="button"
+                    className="ghost"
+                    onClick={() => props.onRemoveUrlEncoded(index)}
+                    aria-label="删除表单字段"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="form-fields">
               <p className="empty">文件只保存本机路径，不会把文件内容写入数据库。</p>

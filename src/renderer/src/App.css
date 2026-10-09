@@ -716,6 +716,21 @@ button.tab.active {
   gap: 8px;
 }
 
+.binary-note {
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+}
+
+.binary-note p {
+  margin: 8px 0 0;
+  color: var(--muted);
+}
+
+.cookie-row {
+  grid-template-columns: 1fr 1.2fr 1fr 0.8fr auto;
+}
+
 .form-field {
   display: flex;
   flex-wrap: wrap;

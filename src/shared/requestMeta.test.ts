@@ -10,6 +10,10 @@ describe("requestMeta", () => {
         { key: "", type: "text", value: "", enabled: true },
         { key: "file", type: "file", value: "D:/a.txt", fileName: "a.txt", enabled: true },
       ],
+      urlencodedFields: [
+        { key: "user", value: "ann", enabled: true },
+        { key: "", value: "", enabled: true },
+      ],
       extractors: [
         { path: "$.token", variable: "token", enabled: true },
         { path: "", variable: "", enabled: true },
@@ -21,12 +25,23 @@ describe("requestMeta", () => {
         { key: "note", type: "text", value: "hi", enabled: true },
         { key: "file", type: "file", value: "D:/a.txt", fileName: "a.txt", enabled: true },
       ],
+      urlencodedFields: [{ key: "user", value: "ann", enabled: true }],
       extractors: [{ path: "$.token", variable: "token", enabled: true }],
     });
   });
 
   it("损坏或空数据回到 raw", () => {
-    expect(parseRequestMeta("")).toEqual({ bodyMode: "raw", formFields: [], extractors: [] });
-    expect(parseRequestMeta("{")).toEqual({ bodyMode: "raw", formFields: [], extractors: [] });
+    expect(parseRequestMeta("")).toEqual({
+      bodyMode: "raw",
+      formFields: [],
+      urlencodedFields: [],
+      extractors: [],
+    });
+    expect(parseRequestMeta("{")).toEqual({
+      bodyMode: "raw",
+      formFields: [],
+      urlencodedFields: [],
+      extractors: [],
+    });
   });
 });

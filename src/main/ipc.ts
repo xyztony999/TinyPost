@@ -1,7 +1,7 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import fs from "node:fs";
 import * as db from "./db";
-import { httpCancel, httpSend } from "./http";
+import { getResponseBinary, httpCancel, httpSend } from "./http";
 import type {
   AppSettings,
   FileFilter,
@@ -72,6 +72,15 @@ export function registerIpc(): void {
     ]);
   });
 
+  ipcMain.handle(
+    "dialog:saveBinaryResponse",
+    async (_e, requestId: string, suggestedName: string) => {
+      const bytes = getResponseBinary(requestId);
+      if (!bytes) return false;
+      return saveBytes(bytes, suggestedName, [{ name: "All Files", extensions: ["*"] }]);
+    },
+  );
+
   ipcMain.handle("dialog:pickFile", async (_e, filters?: FileFilter[]) => {
     const win = targetWindow();
     const options = {
@@ -137,5 +146,16 @@ async function saveText(
     : await dialog.showSaveDialog(options);
   if (result.canceled || !result.filePath) return false;
   fs.writeFileSync(result.filePath, contents ?? "", "utf8");
+  return true;
+}
+
+async function saveBytes(contents: Buffer, suggestedName: string, filters: FileFilter[]): Promise<boolean> {
+  const win = targetWindow();
+  const options = { defaultPath: suggestedName, filters };
+  const result = win
+    ? await dialog.showSaveDialog(win, options)
+    : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return false;
+  fs.writeFileSync(result.filePath, contents);
   return true;
 }

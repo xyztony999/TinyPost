@@ -43,6 +43,8 @@ const api = {
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("db:saveSettings", settings),
   saveResponseBody: (body: string, suggestedName: string) =>
     ipcRenderer.invoke("dialog:saveResponse", body, suggestedName),
+  saveBinaryResponse: (requestId: string, suggestedName: string) =>
+    ipcRenderer.invoke("dialog:saveBinaryResponse", requestId, suggestedName),
   pickFile: (filters?: FileFilter[]) => ipcRenderer.invoke("dialog:pickFile", filters),
   saveTextFile: (contents: string, suggestedName: string) =>
     ipcRenderer.invoke("dialog:saveText", contents, suggestedName),

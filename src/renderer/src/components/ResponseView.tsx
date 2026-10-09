@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExtractionHit } from "@shared/jsonpath";
 import { formatBytes, presentBody, statusTone } from "../lib/format";
+import { mediaType } from "@shared/contentType";
 import type { HttpResponsePayload } from "@shared/types";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 
@@ -16,7 +17,7 @@ interface ResponseViewProps {
   onTab: (tab: "body" | "headers" | "redirects") => void;
   onCopy: (text: string) => void;
   onCopyCurl: () => void;
-  onSaveFile: (text: string) => void;
+  onSaveFile: () => void;
   onExtract: (path: string, variable: string) => void;
 }
 
@@ -75,21 +76,27 @@ export function ResponseView(props: ResponseViewProps) {
         )}
         {props.response && !props.sending && (
           <div className="response-tools">
-            <button type="button" className="ghost" onClick={props.onTogglePretty}>
-              {props.responsePretty ? "Raw" : "Pretty"}
-            </button>
-            <button type="button" className="ghost" onClick={() => props.onCopy(presented?.text || "")}>
-              复制
-            </button>
+            {!props.response.binary && (
+              <button type="button" className="ghost" onClick={props.onTogglePretty}>
+                {props.responsePretty ? "Raw" : "Pretty"}
+              </button>
+            )}
+            {!props.response.binary && (
+              <button type="button" className="ghost" onClick={() => props.onCopy(presented?.text || "")}>
+                复制
+              </button>
+            )}
             <button type="button" className="ghost" onClick={props.onCopyCurl}>
               复制 cURL
             </button>
-            <button type="button" className="ghost" onClick={() => props.onSaveFile(presented?.text || "")}>
-              存文件
+            <button type="button" className="ghost" onClick={props.onSaveFile}>
+              {props.response.binary ? "保存原始响应" : "存文件"}
             </button>
-            <button type="button" className="ghost" onClick={() => setShowExtract(true)}>
-              提取到变量
-            </button>
+            {!props.response.binary && (
+              <button type="button" className="ghost" onClick={() => setShowExtract(true)}>
+                提取到变量
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -148,7 +155,16 @@ export function ResponseView(props: ResponseViewProps) {
               </button>
             ) : null}
           </div>
-          {props.responseTab === "body" ? (
+          {props.responseTab === "body" && props.response.binary ? (
+            <div className="binary-note">
+              <strong>二进制响应</strong>
+              <p>
+                {mediaType(props.response.contentType) || "application/octet-stream"} ·{" "}
+                {formatBytes(responseSize)}
+              </p>
+              <p>内容不会在编辑器里打开，也不会写入历史数据库。可以保存原始字节。</p>
+            </div>
+          ) : props.responseTab === "body" ? (
             <>
               <div className="response-search">
                 <input

@@ -95,6 +95,10 @@ export async function saveResponseBody(
   return api().saveResponseBody(body, suggestedName);
 }
 
+export async function saveBinaryResponse(requestId: string, suggestedName: string): Promise<boolean> {
+  return api().saveBinaryResponse(requestId, suggestedName);
+}
+
 export async function httpCancel(requestId?: string): Promise<boolean> {
   return api().httpCancel(requestId);
 }

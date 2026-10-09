@@ -40,11 +40,26 @@ describe("parseCurl", () => {
   });
 
   it("无 -X 的 -d 默认为 POST，-G 把数据放到查询串", () => {
-    expect(parseCurl("curl https://example.com -d a=1").method).toBe("POST");
+    const posted = parseCurl("curl https://example.com -d a=1&b=two");
+    expect(posted.method).toBe("POST");
+    expect(posted.bodyMode).toBe("urlencoded");
+    expect(posted.urlencodedFields).toEqual([
+      { key: "a", value: "1", enabled: true },
+      { key: "b", value: "two", enabled: true },
+    ]);
     const got = parseCurl("curl -G https://example.com/search -d q=tinypost");
     expect(got.method).toBe("GET");
     expect(got.url).toBe("https://example.com/search?q=tinypost");
     expect(got.body).toBe("");
+  });
+
+  it("--data-urlencode 变成字段，JSON 的 --data-raw 保持原文", () => {
+    const encoded = parseCurl("curl https://example.com --data-urlencode 'user=a b'");
+    expect(encoded.bodyMode).toBe("urlencoded");
+    expect(encoded.urlencodedFields).toEqual([{ key: "user", value: "a b", enabled: true }]);
+    const json = parseCurl("curl https://example.com -H 'Content-Type: application/json' -d '{\"a\":1}'");
+    expect(json.bodyMode).toBe("raw");
+    expect(json.body).toBe('{"a":1}');
   });
 
   it("无效命令给出明确错误", () => {
@@ -76,6 +91,22 @@ describe("buildCurl", () => {
     expect(curl).not.toContain("multipart/form-data");
     expect(curl).toContain("-F 'title=a'\\''b'");
     expect(curl).toContain("-F 'file=@D:\\a.txt;filename=a.txt;type=text/plain'");
+  });
+
+  it("urlencoded 导出为 --data-urlencode，并去掉 Content-Type", () => {
+    const curl = buildCurl({
+      method: "POST",
+      url: "https://example.com/login",
+      headers: [{ key: "Content-Type", value: "application/x-www-form-urlencoded" }],
+      bodyMode: "urlencoded",
+      urlencodedFields: [
+        { key: "user", value: "a b" },
+        { key: "pass", value: "x" },
+      ],
+    });
+    expect(curl).toContain("--data-urlencode 'user=a b'");
+    expect(curl).toContain("--data-urlencode 'pass=x'");
+    expect(curl).not.toContain("Content-Type");
   });
 
   it("GET 不带 body", () => {

@@ -1,3 +1,5 @@
+import type { CookieJar } from "./cookies";
+
 export type HttpMethod =
   | "GET"
   | "POST"
@@ -13,7 +15,7 @@ export interface HeaderItem {
   enabled?: boolean;
 }
 
-export type BodyMode = "raw" | "form-data";
+export type BodyMode = "raw" | "form-data" | "urlencoded";
 
 export interface FormField {
   key: string;
@@ -21,6 +23,12 @@ export interface FormField {
   value: string;
   fileName?: string;
   contentType?: string;
+  enabled?: boolean;
+}
+
+export interface UrlEncodedField {
+  key: string;
+  value: string;
   enabled?: boolean;
 }
 
@@ -96,12 +104,18 @@ export interface RedirectHop {
   location: string;
 }
 
+export interface SetCookieEvent {
+  url: string;
+  line: string;
+}
+
 export interface HttpRequestPayload {
   method: HttpMethod | string;
   url: string;
   headers: HeaderItem[];
   body?: string;
   multipart?: MultipartPartPayload[];
+  urlencoded?: boolean;
   tls?: TlsRequestConfig;
   insecure?: boolean;
   timeoutMs?: number;
@@ -119,6 +133,9 @@ export interface HttpResponsePayload {
   url?: string;
   sizeBytes?: number;
   redirects?: RedirectHop[];
+  binary?: boolean;
+  contentType?: string;
+  setCookies?: SetCookieEvent[];
 }
 
 export interface HistoryRow {
@@ -142,6 +159,7 @@ export interface EnvironmentRow {
   name: string;
   variables: string;
   tls: string;
+  cookies: string;
   is_active: number;
   created_at: string;
 }
@@ -195,6 +213,7 @@ export interface UpsertEnvironmentInput {
   name: string;
   variables: VariableItem[];
   tls?: TlsConfig;
+  cookies?: CookieJar;
   makeActive?: boolean;
 }
 
@@ -212,6 +231,10 @@ export function emptyVariable(): VariableItem {
 
 export function emptyFormField(): FormField {
   return { key: "", type: "text", value: "", enabled: true };
+}
+
+export function emptyUrlEncodedField(): UrlEncodedField {
+  return { key: "", value: "", enabled: true };
 }
 
 export function emptyExtractRule(): ExtractRule {

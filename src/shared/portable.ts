@@ -7,8 +7,11 @@ import type {
   HeaderItem,
   QueryItem,
   TlsConfig,
+  UrlEncodedField,
   VariableItem,
 } from "./types";
+import type { CookieJar } from "./cookies";
+import { emptyCookieJar } from "./cookies";
 import { defaultAuth, emptyTls } from "./types";
 
 export const PORTABLE_VERSION = 1;
@@ -21,8 +24,9 @@ export interface PortableRequest {
   body: string;
   auth: AuthConfig;
   query: QueryItem[];
-  bodyMode: "raw" | "form-data";
+  bodyMode: "raw" | "form-data" | "urlencoded";
   formFields: FormField[];
+  urlencodedFields: UrlEncodedField[];
   extractors: ExtractRule[];
 }
 
@@ -39,6 +43,7 @@ export interface PortableEnvironment {
   name: string;
   variables: VariableItem[];
   tls: TlsConfig;
+  cookies: CookieJar;
 }
 
 export interface PortableBackup {
@@ -50,6 +55,7 @@ export interface PortableBackup {
     variables: VariableItem[];
     isActive?: boolean;
     tls: TlsConfig;
+    cookies: CookieJar;
   }>;
   settings?: AppSettings;
 }
@@ -135,6 +141,19 @@ function readFormFields(value: unknown, label: string): FormField[] {
   });
 }
 
+function readUrlEncodedFields(value: unknown, label: string): UrlEncodedField[] {
+  if (value == null) return [];
+  if (!Array.isArray(value)) fail(`${label}的 urlencodedFields 必须是数组`);
+  return value.map((item, index) => {
+    const row = asObject(item, `${label}的 urlencoded 字段 #${index + 1}`);
+    return {
+      key: String(row.key ?? ""),
+      value: String(row.value ?? ""),
+      enabled: row.enabled === false ? false : true,
+    };
+  });
+}
+
 function readExtractors(value: unknown, label: string): ExtractRule[] {
   if (value == null) return [];
   if (!Array.isArray(value)) fail(`${label}的 extractors 必须是数组`);
@@ -156,9 +175,15 @@ function readRequest(value: unknown, index: number): PortableRequest {
   const method = requiredString(row.method, `${named}缺少方法`);
   if (typeof row.url !== "string") fail(`${named}缺少 URL`);
   if (row.body != null && typeof row.body !== "string") fail(`${named}的 body 必须是字符串`);
-  if (row.bodyMode != null && row.bodyMode !== "raw" && row.bodyMode !== "form-data") {
+  if (
+    row.bodyMode != null &&
+    row.bodyMode !== "raw" &&
+    row.bodyMode !== "form-data" &&
+    row.bodyMode !== "urlencoded"
+  ) {
     fail(`${named}的 bodyMode 无效`);
   }
+  const bodyMode = row.bodyMode === "form-data" ? "form-data" : row.bodyMode === "urlencoded" ? "urlencoded" : "raw";
   return {
     name: name.trim(),
     method: method.trim(),
@@ -167,8 +192,9 @@ function readRequest(value: unknown, index: number): PortableRequest {
     body: typeof row.body === "string" ? row.body : "",
     auth: readAuth(row.auth, named),
     query: readQuery(row.query, named),
-    bodyMode: row.bodyMode === "form-data" ? "form-data" : "raw",
+    bodyMode,
     formFields: readFormFields(row.formFields, named),
+    urlencodedFields: readUrlEncodedFields(row.urlencodedFields, named),
     extractors: readExtractors(row.extractors, named),
   };
 }
@@ -192,6 +218,28 @@ function readTls(value: unknown, label: string): TlsConfig {
     keyPath: String(row.keyPath ?? ""),
     caPath: String(row.caPath ?? ""),
   };
+}
+
+function readCookies(value: unknown, label: string): CookieJar {
+  if (value == null) return emptyCookieJar();
+  const row = asObject(value, `${label}的 cookies`);
+  if (row.items != null && !Array.isArray(row.items)) fail(`${label}的 cookies.items 必须是数组`);
+  const items = (Array.isArray(row.items) ? row.items : []).map((item, index) => {
+    const cookie = asObject(item, `${label}的 Cookie #${index + 1}`);
+    if (typeof cookie.name !== "string" || !cookie.name.trim()) {
+      fail(`${label}的 Cookie #${index + 1} 缺少 name`);
+    }
+    return {
+      name: cookie.name.trim(),
+      value: String(cookie.value ?? ""),
+      domain: String(cookie.domain ?? "").trim().toLowerCase(),
+      path: String(cookie.path ?? "/") || "/",
+      expires: typeof cookie.expires === "number" ? cookie.expires : null,
+      secure: cookie.secure === true,
+      hostOnly: cookie.hostOnly === false ? false : true,
+    };
+  });
+  return { enabled: row.enabled === false ? false : true, items };
 }
 
 function readSettings(value: unknown): AppSettings | undefined {
@@ -241,6 +289,7 @@ export function parsePortable(raw: string): PortableDocument {
       name: name.trim(),
       variables: readVariables(row.variables, "环境"),
       tls: readTls(row.tls, "环境"),
+      cookies: readCookies(row.cookies, "环境"),
     };
   }
   if (row.kind === "tinypost.backup") {
@@ -266,6 +315,7 @@ export function parsePortable(raw: string): PortableDocument {
           variables: readVariables(env.variables, `备份环境「${name}」`),
           isActive: env.isActive === true,
           tls: readTls(env.tls, `备份环境「${name}」`),
+          cookies: readCookies(env.cookies, `备份环境「${name}」`),
         };
       }),
       settings: readSettings(row.settings),

@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS settings (
   ensureColumn("request_history", "query", `TEXT NOT NULL DEFAULT '[]'`);
   ensureColumn("request_history", "meta", `TEXT NOT NULL DEFAULT '{}'`);
   ensureColumn("environments", "tls", `TEXT NOT NULL DEFAULT '{}'`);
+  ensureColumn("environments", "cookies", `TEXT NOT NULL DEFAULT '{"enabled":true,"items":[]}'`);
 }
 
 function tableColumns(table: string): string[] {
@@ -183,7 +184,7 @@ export function clearHistory(): void {
 
 export function listEnvironments(): EnvironmentRow[] {
   return queryAll<EnvironmentRow>(
-    `SELECT id, name, variables, is_active, created_at, tls
+    `SELECT id, name, variables, is_active, created_at, tls, cookies
      FROM environments
      ORDER BY id ASC`,
   );
@@ -216,21 +217,32 @@ export function setActiveEnvironment(id: number): void {
 export function upsertEnvironment(input: UpsertEnvironmentInput): number {
   const variables = JSON.stringify(input.variables);
   const tls = JSON.stringify(input.tls ?? { certPath: "", keyPath: "", caPath: "" });
+  const cookies = input.cookies ? JSON.stringify(input.cookies) : null;
   if (input.id) {
-    run(`UPDATE environments SET name = ?, variables = ?, tls = ? WHERE id = ?`, [
-      input.name,
-      variables,
-      tls,
-      input.id,
-    ]);
+    if (cookies == null) {
+      run(`UPDATE environments SET name = ?, variables = ?, tls = ? WHERE id = ?`, [
+        input.name,
+        variables,
+        tls,
+        input.id,
+      ]);
+    } else {
+      run(`UPDATE environments SET name = ?, variables = ?, tls = ?, cookies = ? WHERE id = ?`, [
+        input.name,
+        variables,
+        tls,
+        cookies,
+        input.id,
+      ]);
+    }
     if (input.makeActive) setActiveEnvironment(input.id);
     return input.id;
   }
   if (input.makeActive) run("UPDATE environments SET is_active = 0");
   return run(
-    `INSERT INTO environments (name, variables, is_active, tls)
-     VALUES (?, ?, ?, ?)`,
-    [input.name, variables, input.makeActive ? 1 : 0, tls],
+    `INSERT INTO environments (name, variables, is_active, tls, cookies)
+     VALUES (?, ?, ?, ?, ?)`,
+    [input.name, variables, input.makeActive ? 1 : 0, tls, cookies ?? '{"enabled":true,"items":[]}'],
   );
 }
 

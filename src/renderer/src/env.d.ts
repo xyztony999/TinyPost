@@ -34,6 +34,7 @@ export interface TinyPostApi {
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   saveResponseBody: (body: string, suggestedName: string) => Promise<boolean>;
+  saveBinaryResponse: (requestId: string, suggestedName: string) => Promise<boolean>;
   pickFile: (filters?: FileFilter[]) => Promise<string | null>;
   saveTextFile: (contents: string, suggestedName: string) => Promise<boolean>;
   backupDatabase: () => Promise<boolean>;

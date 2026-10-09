@@ -3,13 +3,16 @@ import http from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { URL } from "node:url";
+import { isTextContentType } from "../shared/contentType";
 import { buildMultipart, withMultipartContentType } from "../shared/multipart";
+import { withUrlEncodedContentType } from "../shared/urlencoded";
 import type {
   HeaderItem,
   HttpRequestPayload,
   HttpResponsePayload,
   MultipartPartPayload,
   RedirectHop,
+  SetCookieEvent,
   TlsRequestConfig,
 } from "../shared/types";
 import { isRowEnabled } from "../shared/types";
@@ -31,6 +34,11 @@ interface InflightSlot {
 }
 
 const inflight = new Map<string, InflightSlot>();
+const responseBinaries = new Map<string, Buffer>();
+
+export function getResponseBinary(requestId = "default"): Buffer | null {
+  return responseBinaries.get(requestId) ?? null;
+}
 
 function statusTextOf(code: number): string {
   return http.STATUS_CODES[code] || "";
@@ -52,6 +60,12 @@ function hopMethod(status: number, method: string): string {
     return "GET";
   }
   return method;
+}
+
+function setCookieLines(headers: http.IncomingHttpHeaders): string[] {
+  const raw = headers["set-cookie"];
+  if (!raw) return [];
+  return Array.isArray(raw) ? raw.map(String) : [String(raw)];
 }
 
 function locationHeader(headers: http.IncomingHttpHeaders): string | undefined {
@@ -120,6 +134,7 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
 
   const slot: InflightSlot = { cancelled: false, req: null };
   inflight.set(requestId, slot);
+  responseBinaries.delete(requestId);
 
   const timeoutMs = Math.max(1_000, Number(payload.timeoutMs) || 60_000);
   const followRedirects = payload.followRedirects !== false;
@@ -127,6 +142,7 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
   const started = Date.now();
   const deadline = started + timeoutMs;
   const redirects: RedirectHop[] = [];
+  const setCookies: SetCookieEvent[] = [];
 
   const rawUrl = (payload.url || "").trim();
   if (!rawUrl) {
@@ -200,6 +216,8 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
 
             const status = res.statusCode || 0;
             const location = locationHeader(res.headers);
+            const hopCookies = setCookieLines(res.headers);
+            for (const line of hopCookies) setCookies.push({ url: parsed.toString(), line });
             if (
               followRedirects &&
               REDIRECT_CODES.has(status) &&
@@ -228,19 +246,30 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
             const responseHeaders: Record<string, string> = {};
             for (const [key, value] of Object.entries(res.headers)) {
               if (value == null) continue;
+              if (key.toLowerCase() === "set-cookie") {
+                responseHeaders[key] = hopCookies.join("\n");
+                continue;
+              }
               responseHeaders[key] = Array.isArray(value) ? value.join(", ") : String(value);
             }
             const buf = Buffer.concat(chunks);
+            const contentType = responseHeaders["content-type"] || "";
+            const textual = isTextContentType(contentType);
+            if (textual) responseBinaries.delete(requestId);
+            else responseBinaries.set(requestId, buf);
             resolve({
               status,
               statusText: statusTextOf(status),
               headers: responseHeaders,
-              body: buf.toString("utf8"),
+              body: textual ? buf.toString("utf8") : "",
               durationMs: Date.now() - started,
               error: null,
               url: parsed.toString(),
               sizeBytes: buf.length,
               redirects: redirects.length ? redirects : undefined,
+              binary: textual ? undefined : true,
+              contentType: contentType || undefined,
+              setCookies: setCookies.length ? setCookies : undefined,
             });
           });
         },
@@ -279,6 +308,9 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
       const multipart = loadMultipart(payload.multipart);
       headers = withMultipartContentType(headers, multipart.contentType);
       body = multipart.body;
+    } else if (payload.urlencoded && method !== "GET" && method !== "HEAD") {
+      headers = withUrlEncodedContentType(headers);
+      body = encoder.encode(payload.body || "");
     }
     const tlsMaterial = loadTls(payload.tls, isHttps);
     return sendOnce(method, rawUrl, headers, body, tlsMaterial, 0).finally(() => {

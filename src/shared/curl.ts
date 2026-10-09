@@ -1,5 +1,6 @@
-import type { AuthConfig, FormField, HeaderItem } from "./types";
+import type { AuthConfig, FormField, HeaderItem, UrlEncodedField } from "./types";
 import { defaultAuth } from "./types";
+import { parseUrlEncodedBody } from "./urlencoded";
 
 export class CurlParseError extends Error {
   constructor(message: string) {
@@ -13,8 +14,9 @@ export interface ParsedCurl {
   url: string;
   headers: HeaderItem[];
   body: string;
-  bodyMode: "raw" | "form-data";
+  bodyMode: "raw" | "form-data" | "urlencoded";
   formFields: FormField[];
+  urlencodedFields: UrlEncodedField[];
   insecure: boolean;
   auth: AuthConfig;
 }
@@ -24,8 +26,9 @@ export interface CurlExportInput {
   url: string;
   headers: HeaderItem[];
   body?: string;
-  bodyMode?: "raw" | "form-data";
+  bodyMode?: "raw" | "form-data" | "urlencoded";
   formFields?: FormField[];
+  urlencodedFields?: UrlEncodedField[];
 }
 
 const SHORT_WITH_VALUE = new Set(["X", "H", "d", "F", "u", "o", "A", "e", "b", "m"]);
@@ -265,6 +268,8 @@ export function parseCurl(input: string): ParsedCurl {
   let sawPositional = false;
   const headers: HeaderItem[] = [];
   const dataParts: string[] = [];
+  const formDataParts: string[] = [];
+  const urlEncodeParts: string[] = [];
   const formFields: FormField[] = [];
   let insecure = false;
   let useGet = false;
@@ -312,14 +317,17 @@ export function parseCurl(input: string): ParsedCurl {
       headers.push({ key: "Cookie", value: taken.value, enabled: true });
       return taken.next;
     }
-    if (
-      flag === "-d" ||
-      flag === "--data" ||
-      flag === "--data-raw" ||
-      flag === "--data-binary" ||
-      flag === "--data-ascii" ||
-      flag === "--data-urlencode"
-    ) {
+    if (flag === "--data-urlencode") {
+      const taken = take(index, value, flag);
+      urlEncodeParts.push(taken.value);
+      return taken.next;
+    }
+    if (flag === "-d" || flag === "--data" || flag === "--data-ascii") {
+      const taken = take(index, value, flag);
+      formDataParts.push(taken.value);
+      return taken.next;
+    }
+    if (flag === "--data-raw" || flag === "--data-binary") {
       const taken = take(index, value, flag);
       dataParts.push(taken.value);
       return taken.next;
@@ -403,19 +411,45 @@ export function parseCurl(input: string): ParsedCurl {
   }
 
   if (!url) throw new CurlParseError("curl 中没有 URL");
-  if (dataParts.length > 0 && formFields.length > 0) {
+  const hasData = dataParts.length > 0 || formDataParts.length > 0 || urlEncodeParts.length > 0;
+  if (hasData && formFields.length > 0) {
     throw new CurlParseError("不能同时使用 -d 与 -F");
+  }
+  if (urlEncodeParts.length > 0 && (dataParts.length > 0 || formDataParts.length > 0)) {
+    throw new CurlParseError("不能同时使用 --data-urlencode 与 -d");
   }
 
   let body = "";
   let bodyMode: ParsedCurl["bodyMode"] = "raw";
+  let urlencodedFields: UrlEncodedField[] = [];
   if (formFields.length > 0) {
     bodyMode = "form-data";
-  } else if (dataParts.length > 0) {
-    const joined = dataParts.join("&");
-    if (useGet && !method) {
+  } else if (urlEncodeParts.length > 0) {
+    bodyMode = "urlencoded";
+    urlencodedFields = urlEncodeParts.map(parseDataUrlEncode);
+  } else if (formDataParts.length > 0 && dataParts.length === 0) {
+    const joined = formDataParts.join("&");
+    if (useGet && (!method || method === "GET")) {
       url = url.includes("?") ? `${url}&${joined}` : `${url}?${joined}`;
-    } else if (useGet && method === "GET") {
+    } else {
+      const fields = explicitNonFormType(headers) ? null : parseUrlEncodedBody(joined);
+      if (fields) {
+        bodyMode = "urlencoded";
+        urlencodedFields = fields;
+      } else {
+        body = joined;
+        if (!hasContentType(headers)) {
+          headers.push({
+            key: "Content-Type",
+            value: "application/x-www-form-urlencoded",
+            enabled: true,
+          });
+        }
+      }
+    }
+  } else if (dataParts.length > 0 || formDataParts.length > 0) {
+    const joined = [...formDataParts, ...dataParts].join("&");
+    if (useGet && (!method || method === "GET")) {
       url = url.includes("?") ? `${url}&${joined}` : `${url}?${joined}`;
     } else {
       body = joined;
@@ -429,7 +463,9 @@ export function parseCurl(input: string): ParsedCurl {
     }
   }
 
-  if (!method) method = useGet ? "GET" : body || bodyMode === "form-data" ? "POST" : "GET";
+  if (!method) {
+    method = useGet ? "GET" : body || bodyMode === "form-data" || bodyMode === "urlencoded" ? "POST" : "GET";
+  }
 
   let auth = defaultAuth();
   if (user) {
@@ -441,7 +477,24 @@ export function parseCurl(input: string): ParsedCurl {
     };
   }
 
-  return { method, url, headers, body, bodyMode, formFields, insecure, auth };
+  return { method, url, headers, body, bodyMode, formFields, urlencodedFields, insecure, auth };
+}
+
+function explicitNonFormType(headers: HeaderItem[]): boolean {
+  const header = headers.find(
+    (item) => item.enabled !== false && item.key.toLowerCase() === "content-type",
+  );
+  if (!header) return false;
+  return !header.value.toLowerCase().includes("application/x-www-form-urlencoded");
+}
+
+function parseDataUrlEncode(raw: string): UrlEncodedField {
+  if (raw.startsWith("@") || /^[^=]+@/.test(raw)) {
+    throw new CurlParseError("--data-urlencode 不读取文件");
+  }
+  const eq = raw.indexOf("=");
+  if (eq < 0) return { key: "", value: raw, enabled: true };
+  return { key: raw.slice(0, eq), value: raw.slice(eq + 1), enabled: true };
 }
 
 export function shellQuote(value: string): string {
@@ -463,16 +516,22 @@ export function buildCurl(input: CurlExportInput): string {
   const method = (input.method || "GET").toUpperCase();
   const skipBody = method === "GET" || method === "HEAD";
   const multipart = !skipBody && input.bodyMode === "form-data";
+  const urlencoded = !skipBody && input.bodyMode === "urlencoded";
   const lines = [`curl -X ${method} ${shellQuote(input.url)}`];
   for (const header of input.headers) {
     if (header.enabled === false || !header.key.trim()) continue;
-    if (multipart && header.key.toLowerCase() === "content-type") continue;
+    if ((multipart || urlencoded) && header.key.toLowerCase() === "content-type") continue;
     lines.push(`-H ${shellQuote(`${header.key}: ${header.value}`)}`);
   }
   if (multipart) {
     for (const field of input.formFields || []) {
       if (field.enabled === false || !field.key.trim()) continue;
       lines.push(`-F ${shellQuote(formatFormField(field))}`);
+    }
+  } else if (urlencoded) {
+    for (const field of input.urlencodedFields || []) {
+      if (field.enabled === false || !field.key.trim()) continue;
+      lines.push(`--data-urlencode ${shellQuote(`${field.key}=${field.value}`)}`);
     }
   } else if (!skipBody && input.body) {
     lines.push(`--data-raw ${shellQuote(input.body)}`);
