@@ -171,11 +171,9 @@ export function parsePostmanCollection(raw: string): PostmanImportResult {
     throw new Error("无法识别为 Postman Collection");
   }
 
-  if (schema && !schema.includes("collection")) {
-    // 允许无 schema 的简化导出；有 schema 但不含 collection 时提示
-    if (schema.includes("environment")) {
-      throw new Error("这是 Postman Environment 文件，请导入 Collection");
-    }
+  // Postman Environment 的 schema 路径同样包含 /collection/，要用 environment 段区分
+  if (schema.includes("environment")) {
+    throw new Error("这是 Postman Environment 文件，请导入 Collection");
   }
 
   const collectionAuth = authFromPostman(data.auth);
@@ -193,6 +191,47 @@ export function parsePostmanCollection(raw: string): PostmanImportResult {
   return {
     collectionName: data.info?.name?.trim() || "导入的 Collection",
     requests,
+    variables,
+  };
+}
+
+interface PostmanEnvironmentFile {
+  name?: string;
+  values?: Array<{ key?: string; value?: string; enabled?: boolean }>;
+  info?: { schema?: string };
+  item?: unknown;
+}
+
+export interface PostmanEnvironmentResult {
+  name: string;
+  variables: VariableItem[];
+}
+
+export function parsePostmanEnvironment(raw: string): PostmanEnvironmentResult {
+  let data: PostmanEnvironmentFile;
+  try {
+    data = JSON.parse(raw) as PostmanEnvironmentFile;
+  } catch {
+    throw new Error("不是有效的 JSON 文件");
+  }
+
+  const schema = data.info?.schema || "";
+  if (schema.includes("collection") || Array.isArray(data.item)) {
+    throw new Error("这是 Postman Collection 文件，请作为集合导入");
+  }
+  if (!Array.isArray(data.values)) {
+    throw new Error("无法识别为 Postman Environment");
+  }
+
+  const variables = data.values
+    .filter((item) => item && item.key && item.enabled !== false)
+    .map((item) => ({
+      key: String(item.key),
+      value: String(item.value ?? ""),
+    }));
+
+  return {
+    name: data.name?.trim() || "导入的环境",
     variables,
   };
 }

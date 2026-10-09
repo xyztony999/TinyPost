@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { TinyPostLogo } from "./components/TinyPostLogo";
+import { EnvEditor } from "./components/EnvEditor";
+import { CurlImportDialog, METHODS, RequestEditor, type ComposerTab } from "./components/RequestEditor";
+import { ResponseView } from "./components/ResponseView";
+import { Sidebar } from "./components/Sidebar";
 import {
+  backupDatabase,
   clearHistory,
   createCollection,
   deleteCollection,
@@ -12,18 +17,21 @@ import {
   listCollections,
   listHistory,
   listSavedRequests,
+  pickFile,
   renameCollection,
   renameSavedRequest,
+  restoreDatabase,
   saveHistory,
   saveRequest,
   saveResponseBody,
   saveSettings,
+  saveTextFile,
   setActiveEnvironment,
   upsertEnvironment,
 } from "./db";
 import { applyAuth, parseAuthJson } from "./lib/auth";
-import { formatBytes, looksLikeJson, statusTone, tryFormatJson } from "./lib/format";
-import { parsePostmanCollection } from "./lib/postmanImport";
+import { looksLikeJson } from "./lib/format";
+import { parseImportJson } from "./lib/importFile";
 import {
   buildUrl,
   mergeQueryFromUrl,
@@ -33,36 +41,46 @@ import {
   withTrailingEmpty,
 } from "./lib/query";
 import { parseVariablesJson, substituteVars, variablesToMap } from "./lib/vars";
+import { buildCurl, parseCurl } from "@shared/curl";
+import { extractByRules, type ExtractionHit } from "@shared/jsonpath";
+import type { PortableRequest } from "@shared/portable";
+import { PORTABLE_VERSION } from "@shared/portable";
+import {
+  compactExtractors,
+  compactFormFields,
+  parseRequestMeta,
+  serializeRequestMeta,
+} from "@shared/requestMeta";
+import { looksLikeXml } from "@shared/xml";
 import type {
   AuthConfig,
+  BodyMode,
   CollectionRow,
   EnvironmentRow,
+  ExtractRule,
+  FormField,
   HeaderItem,
   HistoryRow,
   HttpMethod,
   HttpResponsePayload,
+  MultipartPartPayload,
   QueryItem,
   SavedRequestRow,
+  TlsConfig,
+  TlsRequestConfig,
   VariableItem,
 } from "@shared/types";
 import {
   DEFAULT_SETTINGS,
   defaultAuth,
+  emptyExtractRule,
+  emptyFormField,
   emptyHeader,
+  emptyTls,
   emptyVariable,
   isRowEnabled,
 } from "@shared/types";
 import "./App.css";
-
-const METHODS: HttpMethod[] = [
-  "GET",
-  "POST",
-  "PUT",
-  "PATCH",
-  "DELETE",
-  "HEAD",
-  "OPTIONS",
-];
 
 const COMPOSER_REQUEST_ID = "composer";
 
@@ -86,59 +104,85 @@ function parseHeadersJson(raw: string): HeaderItem[] {
   }
 }
 
-function matchesQuery(haystack: string, needle: string): boolean {
-  return haystack.toLowerCase().includes(needle);
-}
-
 function parseResponseHeaders(raw: string): Record<string, string> {
   try {
     const parsed = JSON.parse(raw || "{}") as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return Object.fromEntries(
-      Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
-        key,
-        String(value ?? ""),
-      ]),
+      Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")]),
     );
   } catch {
     return {};
   }
 }
 
+function parseTls(raw: string | null | undefined): TlsConfig {
+  try {
+    const parsed = JSON.parse(raw || "{}") as Partial<TlsConfig>;
+    return {
+      certPath: String(parsed.certPath ?? ""),
+      keyPath: String(parsed.keyPath ?? ""),
+      caPath: String(parsed.caPath ?? ""),
+    };
+  } catch {
+    return emptyTls();
+  }
+}
+
+function fileBaseName(filePath: string): string {
+  const parts = filePath.split(/[/\\]/);
+  return parts[parts.length - 1] || "";
+}
+
+function persistList<T>(items: T[], isFilled: (item: T) => boolean, empty: () => T): T[] {
+  if (items.length === 0) return [empty()];
+  return isFilled(items[items.length - 1]) ? [...items, empty()] : items;
+}
+
+function persistHeaders(next: HeaderItem[]): HeaderItem[] {
+  return persistList(next, (item) => Boolean(item.key || item.value), emptyHeader);
+}
+
+function persistFormFields(next: FormField[]): FormField[] {
+  return persistList(
+    next,
+    (item) => Boolean(item.key || item.value || item.fileName || item.contentType),
+    emptyFormField,
+  );
+}
+
+function persistExtractors(next: ExtractRule[]): ExtractRule[] {
+  return persistList(next, (item) => Boolean(item.path || item.variable), emptyExtractRule);
+}
+
 function App() {
   const [method, setMethod] = useState<HttpMethod>("GET");
   const [url, setUrl] = useState("{{baseUrl}}/api/health");
-  const [queryParams, setQueryParams] = useState<QueryItem[]>(() =>
-    queryFromUrl("{{baseUrl}}/api/health"),
-  );
+  const [queryParams, setQueryParams] = useState<QueryItem[]>(() => queryFromUrl("{{baseUrl}}/api/health"));
   const [headers, setHeaders] = useState<HeaderItem[]>([
     { key: "Accept", value: "application/json", enabled: true },
     emptyHeader(),
   ]);
   const [body, setBody] = useState("");
+  const [bodyMode, setBodyMode] = useState<BodyMode>("raw");
+  const [formFields, setFormFields] = useState<FormField[]>([emptyFormField()]);
+  const [extractors, setExtractors] = useState<ExtractRule[]>([emptyExtractRule()]);
   const [auth, setAuth] = useState<AuthConfig>(defaultAuth());
   const [insecure, setInsecure] = useState(DEFAULT_SETTINGS.insecure);
   const [timeoutMs, setTimeoutMs] = useState(DEFAULT_SETTINGS.timeoutMs);
-  const [followRedirects, setFollowRedirects] = useState(
-    DEFAULT_SETTINGS.followRedirects,
-  );
+  const [followRedirects, setFollowRedirects] = useState(DEFAULT_SETTINGS.followRedirects);
   const [settingsReady, setSettingsReady] = useState(false);
   const [sending, setSending] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<HttpResponsePayload | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
-  const [composerTab, setComposerTab] = useState<
-    "auth" | "query" | "headers" | "body"
-  >("headers");
-  const [responseTab, setResponseTab] = useState<"body" | "headers" | "redirects">(
-    "body",
-  );
+  const [composerTab, setComposerTab] = useState<ComposerTab>("headers");
+  const [responseTab, setResponseTab] = useState<"body" | "headers" | "redirects">("body");
   const [responsePretty, setResponsePretty] = useState(true);
-  const [sidebarTab, setSidebarTab] = useState<"collections" | "history">(
-    "collections",
-  );
+  const [sidebarTab, setSidebarTab] = useState<"collections" | "history">("collections");
   const [sidebarSearch, setSidebarSearch] = useState("");
+  const [extractNotice, setExtractNotice] = useState<ExtractionHit[]>([]);
 
   const [environments, setEnvironments] = useState<EnvironmentRow[]>([]);
   const [collections, setCollections] = useState<CollectionRow[]>([]);
@@ -148,51 +192,35 @@ function App() {
   const [editingEnvId, setEditingEnvId] = useState<number | null>(null);
   const [envName, setEnvName] = useState("");
   const [envVars, setEnvVars] = useState<VariableItem[]>([emptyVariable()]);
+  const [envTls, setEnvTls] = useState<TlsConfig>(emptyTls());
+  const [envPassphrase, setEnvPassphrase] = useState("");
+  const [tlsPassphrases, setTlsPassphrases] = useState<Record<number, string>>({});
+  const [showCurlImport, setShowCurlImport] = useState(false);
+  const [curlDraft, setCurlDraft] = useState("");
   const [toast, setToast] = useState<string | null>(null);
   const [currentSavedId, setCurrentSavedId] = useState<number | null>(null);
-  const [currentCollectionId, setCurrentCollectionId] = useState<number | null>(
-    null,
-  );
+  const [currentCollectionId, setCurrentCollectionId] = useState<number | null>(null);
   const [currentSavedName, setCurrentSavedName] = useState("");
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<number | null>(null);
+  const actionsRef = useRef({
+    send: () => {},
+    save: () => {},
+    saveEnv: () => {},
+    importCurl: () => {},
+    showEnv: false,
+    showCurl: false,
+  });
 
   const activeEnv = useMemo(
-    () => environments.find((e) => e.is_active === 1) || environments[0] || null,
+    () => environments.find((env) => env.is_active === 1) || environments[0] || null,
     [environments],
   );
-
   const activeVars = useMemo(
     () => variablesToMap(parseVariablesJson(activeEnv?.variables || "[]")),
     [activeEnv],
   );
-
   const canSend = useMemo(() => url.trim().length > 0 && !sending, [url, sending]);
-  const searchNeedle = sidebarSearch.trim().toLowerCase();
-
-  const filteredHistory = useMemo(() => {
-    if (!searchNeedle) return history;
-    return history.filter((item) =>
-      [item.method, item.url, String(item.status ?? "")].some((part) =>
-        matchesQuery(part, searchNeedle),
-      ),
-    );
-  }, [history, searchNeedle]);
-
-  const visibleCollections = useMemo(() => {
-    if (!searchNeedle) return collections;
-    return collections.filter((collection) => {
-      if (matchesQuery(collection.name, searchNeedle)) return true;
-      return savedRequests.some(
-        (item) =>
-          item.collection_id === collection.id &&
-          [item.name, item.method, item.url].some((part) =>
-            matchesQuery(part, searchNeedle),
-          ),
-      );
-    });
-  }, [collections, savedRequests, searchNeedle]);
 
   function showToast(message: string) {
     setToast(message);
@@ -211,10 +239,7 @@ function App() {
     setCollections(cols);
     setSavedRequests(reqs);
     setHistory(hist);
-    setExpandedCollections((prev) => {
-      if (prev.length > 0) return prev;
-      return cols.slice(0, 3).map((c) => c.id);
-    });
+    setExpandedCollections((prev) => (prev.length > 0 ? prev : cols.slice(0, 3).map((item) => item.id)));
   }
 
   useEffect(() => {
@@ -238,9 +263,7 @@ function App() {
 
   useEffect(() => {
     if (!settingsReady) return;
-    void saveSettings({ timeoutMs, insecure, followRedirects }).catch((e) =>
-      console.error(e),
-    );
+    void saveSettings({ timeoutMs, insecure, followRedirects }).catch((e) => console.error(e));
   }, [timeoutMs, insecure, followRedirects, settingsReady]);
 
   useEffect(() => {
@@ -253,17 +276,28 @@ function App() {
     return () => window.clearInterval(id);
   }, [sending]);
 
-  function persistHeaders(next: HeaderItem[]): HeaderItem[] {
-    if (next.length === 0) return [emptyHeader()];
-    const last = next[next.length - 1];
-    if (last.key || last.value) return [...next, emptyHeader()];
-    return next;
-  }
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "enter") {
+        event.preventDefault();
+        if (actionsRef.current.showEnv || actionsRef.current.showCurl) return;
+        actionsRef.current.send();
+      } else if (key === "s") {
+        event.preventDefault();
+        if (actionsRef.current.showCurl) actionsRef.current.importCurl();
+        else if (actionsRef.current.showEnv) actionsRef.current.saveEnv();
+        else actionsRef.current.save();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   function updateHeader(index: number, patch: Partial<HeaderItem>) {
-    setHeaders((prev) =>
-      persistHeaders(prev.map((item, i) => (i === index ? { ...item, ...patch } : item))),
-    );
+    setHeaders((prev) => persistHeaders(prev.map((item, i) => (i === index ? { ...item, ...patch } : item))));
   }
 
   function removeHeader(index: number) {
@@ -280,21 +314,43 @@ function App() {
   }
 
   function updateQuery(index: number, patch: Partial<QueryItem>) {
-    applyQueryItems(
-      queryParams.map((item, i) => (i === index ? { ...item, ...patch } : item)),
-    );
+    applyQueryItems(queryParams.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   }
 
   function removeQuery(index: number) {
     applyQueryItems(queryParams.filter((_, i) => i !== index));
   }
 
+  function updateFormField(index: number, patch: Partial<FormField>) {
+    setFormFields((prev) =>
+      persistFormFields(prev.map((item, i) => (i === index ? { ...item, ...patch } : item))),
+    );
+  }
+
+  function removeFormField(index: number) {
+    setFormFields((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length ? persistFormFields(next) : [emptyFormField()];
+    });
+  }
+
+  function updateExtractor(index: number, patch: Partial<ExtractRule>) {
+    setExtractors((prev) =>
+      persistExtractors(prev.map((item, i) => (i === index ? { ...item, ...patch } : item))),
+    );
+  }
+
+  function removeExtractor(index: number) {
+    setExtractors((prev) => {
+      const next = prev.filter((_, i) => i !== index);
+      return next.length ? persistExtractors(next) : [emptyExtractRule()];
+    });
+  }
+
   function updateEnvVar(index: number, patch: Partial<VariableItem>) {
     setEnvVars((prev) => {
       const next = prev.map((item, i) => (i === index ? { ...item, ...patch } : item));
-      if (index === next.length - 1 && (patch.key || patch.value)) {
-        next.push(emptyVariable());
-      }
+      if (index === next.length - 1 && (patch.key || patch.value)) next.push(emptyVariable());
       return next;
     });
   }
@@ -304,11 +360,7 @@ function App() {
     setQueryParams((prev) => mergeQueryFromUrl(next, prev));
   }
 
-  function bindSaved(saved?: {
-    id: number;
-    collectionId: number | null;
-    name: string;
-  } | null) {
+  function bindSaved(saved?: { id: number; collectionId: number | null; name: string } | null) {
     setCurrentSavedId(saved?.id ?? null);
     setCurrentCollectionId(saved?.collectionId ?? null);
     setCurrentSavedName(saved?.name ?? "");
@@ -332,19 +384,24 @@ function App() {
     body: string;
     auth?: AuthConfig;
     query?: string;
+    meta?: string;
     response?: HttpResponsePayload | null;
     saved?: { id: number; collectionId: number | null; name: string } | null;
+    tab?: ComposerTab;
   }) {
     setMethod((input.method.toUpperCase() as HttpMethod) || "GET");
     loadQueryState(input.url, input.query);
-    setHeaders(
-      input.headers.length ? persistHeaders(input.headers) : [emptyHeader()],
-    );
+    setHeaders(input.headers.length ? persistHeaders(input.headers) : [emptyHeader()]);
     setBody(input.body || "");
+    const meta = parseRequestMeta(input.meta);
+    setBodyMode(meta.bodyMode);
+    setFormFields(meta.formFields.length ? persistFormFields(meta.formFields) : [emptyFormField()]);
+    setExtractors(meta.extractors.length ? persistExtractors(meta.extractors) : [emptyExtractRule()]);
     setAuth(input.auth || defaultAuth());
     setResponse(input.response ?? null);
     setError(null);
-    setComposerTab("headers");
+    setExtractNotice([]);
+    setComposerTab(input.tab ?? "headers");
     setResponseTab("body");
     setResponsePretty(true);
     bindSaved(input.saved ?? null);
@@ -358,6 +415,7 @@ function App() {
       body: item.request_body || "",
       auth: parseAuthJson(item.auth),
       query: item.query,
+      meta: item.meta,
       response: {
         status: item.status ?? 0,
         statusText: "",
@@ -377,12 +435,9 @@ function App() {
       body: item.body || "",
       auth: parseAuthJson(item.auth),
       query: item.query,
+      meta: item.meta,
       response: null,
-      saved: {
-        id: item.id,
-        collectionId: item.collection_id,
-        name: item.name,
-      },
+      saved: { id: item.id, collectionId: item.collection_id, name: item.name },
     });
   }
 
@@ -390,35 +445,145 @@ function App() {
     return {
       method,
       url,
-      headers: headers.filter((h) => h.key.trim()),
+      headers: headers.filter((header) => header.key.trim()),
       body,
       auth,
       query: serializeQuery(queryParams),
+      meta: serializeRequestMeta({
+        bodyMode,
+        formFields: compactFormFields(formFields),
+        extractors: compactExtractors(extractors),
+      }),
     };
+  }
+
+  function resolvedCurl(): string {
+    const cleanedHeaders = headers
+      .filter((header) => header.key.trim() && isRowEnabled(header))
+      .map((header) => ({
+        key: substituteVars(header.key, activeVars),
+        value: substituteVars(header.value, activeVars),
+        enabled: true,
+      }));
+    const skipBody = method === "GET" || method === "HEAD";
+    return buildCurl({
+      method,
+      url: substituteVars(url.trim(), activeVars),
+      headers: applyAuth(cleanedHeaders, auth, activeVars),
+      body: skipBody ? "" : substituteVars(body, activeVars),
+      bodyMode: skipBody ? "raw" : bodyMode,
+      formFields: skipBody
+        ? []
+        : formFields
+            .filter((field) => isRowEnabled(field) && field.key.trim())
+            .map((field) => ({
+              ...field,
+              key: substituteVars(field.key, activeVars),
+              value: substituteVars(field.value, activeVars),
+              fileName: field.fileName ? substituteVars(field.fileName, activeVars) : field.fileName,
+              contentType: field.contentType
+                ? substituteVars(field.contentType, activeVars)
+                : field.contentType,
+            })),
+    });
+  }
+
+  function activeTlsPayload(): TlsRequestConfig | undefined {
+    if (!activeEnv) return undefined;
+    const tls = parseTls(activeEnv.tls);
+    const passphrase = tlsPassphrases[activeEnv.id] || "";
+    if (!tls.certPath && !tls.keyPath && !tls.caPath && !passphrase) return undefined;
+    return { ...tls, passphrase: passphrase || undefined };
+  }
+
+  async function writeVariables(updates: Array<{ key: string; value: string }>) {
+    if (!activeEnv) {
+      showToast("没有活动环境");
+      return false;
+    }
+    const current = parseVariablesJson(activeEnv.variables);
+    for (const update of updates) {
+      const index = current.findIndex((item) => item.key === update.key);
+      if (index >= 0) current[index] = { key: update.key, value: update.value };
+      else current.push(update);
+    }
+    await upsertEnvironment({
+      id: activeEnv.id,
+      name: activeEnv.name,
+      variables: current,
+      tls: parseTls(activeEnv.tls),
+    });
+    const envs = await ensureDefaultEnvironment();
+    setEnvironments(envs);
+    if (showEnvEditor && editingEnvId === activeEnv.id) {
+      const fresh = envs.find((env) => env.id === activeEnv.id);
+      const vars = parseVariablesJson(fresh?.variables || "[]");
+      setEnvVars(vars.length ? [...vars, emptyVariable()] : [emptyVariable()]);
+    }
+    return true;
+  }
+
+  async function applyHits(hits: ExtractionHit[]) {
+    const writable = hits.filter((hit) => hit.ok && hit.value !== undefined);
+    if (writable.length === 0) {
+      setExtractNotice(hits);
+      return;
+    }
+    const wrote = await writeVariables(
+      writable.map((hit) => ({ key: hit.variable, value: hit.value || "" })),
+    );
+    setExtractNotice(
+      wrote ? hits : hits.map((hit) => (hit.ok ? { ...hit, ok: false, error: "没有活动环境" } : hit)),
+    );
   }
 
   async function sendRequest() {
     if (!canSend) return;
+    if (bodyMode === "form-data" && method !== "GET" && method !== "HEAD") {
+      for (const field of formFields) {
+        if (!isRowEnabled(field) || !field.key.trim()) continue;
+        if (field.type === "file" && !field.value.trim()) {
+          setError(`请为「${field.key}」选择文件`);
+          return;
+        }
+      }
+    }
+
     setSending(true);
     setError(null);
     setResponse(null);
+    setExtractNotice([]);
 
-    const cleanedHeaders = headers.filter((h) => h.key.trim() && isRowEnabled(h));
+    const cleanedHeaders = headers.filter((header) => header.key.trim() && isRowEnabled(header));
     const resolvedUrl = substituteVars(url.trim(), activeVars);
-    const resolvedHeaders = cleanedHeaders.map((h) => ({
-      key: substituteVars(h.key, activeVars),
-      value: substituteVars(h.value, activeVars),
+    const resolvedHeaders = cleanedHeaders.map((header) => ({
+      key: substituteVars(header.key, activeVars),
+      value: substituteVars(header.value, activeVars),
       enabled: true,
     }));
     const resolvedBody = substituteVars(body, activeVars);
     const finalHeaders = applyAuth(resolvedHeaders, auth, activeVars);
+    const sendMultipart = bodyMode === "form-data" && method !== "GET" && method !== "HEAD";
+    const multipart: MultipartPartPayload[] | undefined = sendMultipart
+      ? formFields
+          .filter((field) => isRowEnabled(field) && field.key.trim())
+          .map((field) => ({
+            name: substituteVars(field.key, activeVars),
+            text: field.type === "text" ? substituteVars(field.value, activeVars) : undefined,
+            filePath: field.type === "file" ? substituteVars(field.value, activeVars) : undefined,
+            fileName: field.fileName ? substituteVars(field.fileName, activeVars) : undefined,
+            contentType: field.contentType ? substituteVars(field.contentType, activeVars) : undefined,
+          }))
+      : undefined;
 
     try {
       const result = await window.tinypost.httpSend({
         method,
         url: resolvedUrl,
         headers: finalHeaders,
-        body: ["GET", "HEAD"].includes(method) ? undefined : resolvedBody,
+        body: method === "GET" || method === "HEAD" || sendMultipart ? undefined : resolvedBody,
+        multipart: multipart && multipart.length > 0 ? multipart : undefined,
+        tls: activeTlsPayload(),
         insecure,
         timeoutMs,
         followRedirects,
@@ -428,16 +593,15 @@ function App() {
       setResponse(result);
       setResponseTab("body");
       const payload = composerPayload();
-      await saveHistory({
-        method: payload.method,
-        url: payload.url,
-        headers: payload.headers,
-        body: payload.body,
-        auth: payload.auth,
-        query: payload.query,
-        response: result,
-      });
+      await saveHistory({ ...payload, response: result });
       setHistory(await listHistory());
+      if (result.status >= 200 && result.status < 300) {
+        const rules = compactExtractors(extractors);
+        if (rules.length > 0) {
+          const hits = extractByRules(result.body, rules);
+          await applyHits(hits);
+        }
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(message);
@@ -467,6 +631,8 @@ function App() {
       setEnvName(env.name);
       const vars = parseVariablesJson(env.variables);
       setEnvVars(vars.length ? [...vars, emptyVariable()] : [emptyVariable()]);
+      setEnvTls(parseTls(env.tls));
+      setEnvPassphrase(tlsPassphrases[env.id] || "");
     } else {
       setEditingEnvId(null);
       setEnvName("新环境");
@@ -475,6 +641,8 @@ function App() {
         { key: "token", value: "" },
         emptyVariable(),
       ]);
+      setEnvTls(emptyTls());
+      setEnvPassphrase("");
     }
     setShowEnvEditor(true);
   }
@@ -485,13 +653,15 @@ function App() {
       showToast("请填写环境名称");
       return;
     }
-    const variables = envVars.filter((v) => v.key.trim());
+    const variables = envVars.filter((item) => item.key.trim());
     const id = await upsertEnvironment({
       id: editingEnvId ?? undefined,
       name,
       variables,
+      tls: envTls,
       makeActive: true,
     });
+    setTlsPassphrases((prev) => ({ ...prev, [id]: envPassphrase }));
     setShowEnvEditor(false);
     await setActiveEnvironment(id);
     setEnvironments(await ensureDefaultEnvironment());
@@ -505,6 +675,11 @@ function App() {
       return;
     }
     await deleteEnvironment(editingEnvId);
+    setTlsPassphrases((prev) => {
+      const next = { ...prev };
+      delete next[editingEnvId];
+      return next;
+    });
     setShowEnvEditor(false);
     setEnvironments(await ensureDefaultEnvironment());
     showToast("环境已删除");
@@ -519,29 +694,16 @@ function App() {
     showToast("集合已创建");
   }
 
-  async function persistCurrentRequest(input: {
-    id?: number;
-    collectionId: number;
-    name: string;
-  }) {
+  async function persistCurrentRequest(input: { id?: number; collectionId: number; name: string }) {
     const payload = composerPayload();
     const id = await saveRequest({
       id: input.id,
       collectionId: input.collectionId,
       name: input.name,
-      method: payload.method,
-      url: payload.url,
-      headers: payload.headers,
-      body: payload.body,
-      auth: payload.auth,
-      query: payload.query,
+      ...payload,
     });
     setSavedRequests(await listSavedRequests());
-    bindSaved({
-      id,
-      collectionId: input.collectionId,
-      name: input.name,
-    });
+    bindSaved({ id, collectionId: input.collectionId, name: input.name });
     setExpandedCollections((prev) =>
       prev.includes(input.collectionId) ? prev : [...prev, input.collectionId],
     );
@@ -572,24 +734,15 @@ function App() {
     setCollections(latest);
     if (latest.length === 0) return;
 
-    const collectionNameList = latest.map((c, i) => `${i + 1}. ${c.name}`).join("\n");
-    const pick = window.prompt(
-      `保存到哪个集合？输入序号：\n${collectionNameList}`,
-      "1",
-    );
+    const collectionNameList = latest.map((item, index) => `${index + 1}. ${item.name}`).join("\n");
+    const pick = window.prompt(`保存到哪个集合？输入序号：\n${collectionNameList}`, "1");
     const index = Number(pick) - 1;
     if (!Number.isFinite(index) || index < 0 || index >= latest.length) {
       showToast("无效的集合序号");
       return;
     }
-
-    const reqName =
-      window.prompt("请求名称", currentSavedName || `${method} ${url}`) ||
-      `${method} ${url}`;
-    await persistCurrentRequest({
-      collectionId: latest[index].id,
-      name: reqName.trim(),
-    });
+    const reqName = window.prompt("请求名称", currentSavedName || `${method} ${url}`) || `${method} ${url}`;
+    await persistCurrentRequest({ collectionId: latest[index].id, name: reqName.trim() });
     showToast("已保存到集合");
   }
 
@@ -624,97 +777,298 @@ function App() {
     if (currentSavedId === id) bindSaved(null);
   }
 
-  async function onImportFile(file: File) {
+  async function saveNamedEnvironment(
+    name: string,
+    variables: VariableItem[],
+    tls: TlsConfig = emptyTls(),
+    makeActive = false,
+  ) {
     try {
-      const text = await file.text();
-      const imported = parsePostmanCollection(text);
-      const collectionId = await createCollection(imported.collectionName);
-
-      for (const req of imported.requests) {
-        await saveRequest({
-          collectionId,
-          name: req.name,
-          method: req.method,
-          url: req.url,
-          headers: req.headers,
-          body: req.body,
-          auth: req.auth,
-          query: serializeQuery(queryFromUrl(req.url)),
-        });
-      }
-
-      if (imported.variables.length > 0) {
-        try {
-          await upsertEnvironment({
-            name: `${imported.collectionName} 变量`,
-            variables: imported.variables,
-            makeActive: false,
-          });
-        } catch {
-          await upsertEnvironment({
-            name: `${imported.collectionName} 变量 ${Date.now()}`,
-            variables: imported.variables,
-            makeActive: false,
-          });
-        }
-      }
-
-      await refreshAll();
-      setExpandedCollections((prev) => [...prev, collectionId]);
-      setSidebarTab("collections");
-      showToast(`已导入 ${imported.requests.length} 个请求`);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      showToast(message);
-    } finally {
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      return await upsertEnvironment({ name, variables, tls, makeActive });
+    } catch {
+      return await upsertEnvironment({
+        name: `${name} ${Date.now()}`,
+        variables,
+        tls,
+        makeActive,
+      });
     }
   }
 
-  async function copyResponse(text: string) {
+  async function importRequestList(name: string, requests: PortableRequest[]) {
+    const collectionId = await createCollection(name);
+    for (const req of requests) {
+      const stored = req.query?.length ? req.query : queryFromUrl(req.url);
+      await saveRequest({
+        collectionId,
+        name: req.name,
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        body: req.body,
+        auth: req.auth,
+        query: serializeQuery(stored),
+        meta: serializeRequestMeta({
+          bodyMode: req.bodyMode || "raw",
+          formFields: req.formFields || [],
+          extractors: req.extractors || [],
+        }),
+      });
+    }
+    return collectionId;
+  }
+
+  async function onImportFile(file: File) {
+    try {
+      const text = await file.text();
+      const imported = parseImportJson(text);
+      if (imported.type === "postman-environment" || imported.type === "environment") {
+        const tls = imported.type === "environment" ? imported.data.tls : emptyTls();
+        await saveNamedEnvironment(imported.data.name, imported.data.variables, tls, false);
+        await refreshAll();
+        showToast(`已导入环境「${imported.data.name}」`);
+        return;
+      }
+      if (imported.type === "backup") {
+        if (
+          !window.confirm("将导入备份中的集合和环境，不会删除现有数据。完整数据库请用「恢复」。继续？")
+        ) {
+          return;
+        }
+        for (const collection of imported.data.collections) {
+          await importRequestList(collection.name, collection.requests);
+        }
+        for (const env of imported.data.environments) {
+          const id = await saveNamedEnvironment(env.name, env.variables, env.tls, false);
+          if (env.isActive) await setActiveEnvironment(id);
+        }
+        if (imported.data.settings) {
+          setTimeoutMs(imported.data.settings.timeoutMs);
+          setInsecure(imported.data.settings.insecure);
+          setFollowRedirects(imported.data.settings.followRedirects);
+        }
+        await refreshAll();
+        showToast("已导入备份中的集合和环境");
+        return;
+      }
+
+      const collectionName =
+        imported.type === "collection" ? imported.data.name : imported.data.collectionName;
+      const requests: PortableRequest[] =
+        imported.type === "collection"
+          ? imported.data.requests
+          : imported.data.requests.map((req) => ({
+              name: req.name,
+              method: req.method,
+              url: req.url,
+              headers: req.headers,
+              body: req.body,
+              auth: req.auth,
+              query: [],
+              bodyMode: "raw" as const,
+              formFields: [],
+              extractors: [],
+            }));
+      const collectionId = await importRequestList(collectionName, requests);
+      if (imported.type === "postman-collection" && imported.data.variables.length > 0) {
+        await saveNamedEnvironment(`${collectionName} 变量`, imported.data.variables, emptyTls(), false);
+      }
+      await refreshAll();
+      setExpandedCollections((prev) => [...prev, collectionId]);
+      setSidebarTab("collections");
+      showToast(`已导入 ${requests.length} 个请求`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function onExportCollection(collection: CollectionRow) {
+    const requests = savedRequests
+      .filter((item) => item.collection_id === collection.id)
+      .map((item) => {
+        const meta = parseRequestMeta(item.meta);
+        const stored = parseQueryJson(item.query);
+        const query = (stored || queryFromUrl(item.url)).filter(
+          (itemQuery) => itemQuery.key.trim() || itemQuery.value || itemQuery.enabled === false,
+        );
+        return {
+          name: item.name,
+          method: item.method,
+          url: item.url,
+          headers: parseHeadersJson(item.headers),
+          body: item.body || "",
+          auth: parseAuthJson(item.auth),
+          query,
+          bodyMode: meta.bodyMode,
+          formFields: meta.formFields,
+          extractors: meta.extractors,
+        };
+      });
+    const saved = await saveTextFile(
+      JSON.stringify({ version: PORTABLE_VERSION, kind: "tinypost.collection", name: collection.name, requests }, null, 2),
+      `${collection.name}.json`,
+    );
+    showToast(saved ? "集合已导出" : "已取消导出");
+  }
+
+  async function onExportEnvironment() {
+    const name = envName.trim();
+    if (!name) {
+      showToast("请填写环境名称");
+      return;
+    }
+    const saved = await saveTextFile(
+      JSON.stringify(
+        {
+          version: PORTABLE_VERSION,
+          kind: "tinypost.environment",
+          name,
+          variables: envVars.filter((item) => item.key.trim()),
+          tls: envTls,
+        },
+        null,
+        2,
+      ),
+      `${name}.json`,
+    );
+    showToast(saved ? "环境已导出" : "已取消导出");
+  }
+
+  async function onBackup() {
+    try {
+      const saved = await backupDatabase();
+      showToast(saved ? "已备份全部数据" : "已取消备份");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "备份失败");
+    }
+  }
+
+  async function onRestore() {
+    if (!window.confirm("恢复将用备份覆盖当前全部本地数据（集合、环境、历史、设置），且不能撤销。确定继续？")) {
+      return;
+    }
+    try {
+      const restored = await restoreDatabase();
+      if (!restored) {
+        showToast("已取消恢复");
+        return;
+      }
+      const settings = await getSettings();
+      setTimeoutMs(settings.timeoutMs);
+      setInsecure(settings.insecure);
+      setFollowRedirects(settings.followRedirects);
+      setTlsPassphrases({});
+      bindSaved(null);
+      await refreshAll();
+      showToast("已从备份恢复");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "恢复失败");
+    }
+  }
+
+  async function copyText(text: string, success = "已复制") {
     try {
       await navigator.clipboard.writeText(text);
-      showToast("已复制");
+      showToast(success);
     } catch {
       showToast("复制失败");
     }
   }
 
-  async function onSaveResponseFile() {
-    if (!response) return;
-    const ext = looksLikeJson(response.body) ? "json" : "txt";
-    const suggested = `tinypost-${response.status}-${Date.now()}.${ext}`;
-    const saved = await saveResponseBody(
-      responsePretty ? tryFormatJson(response.body) : response.body,
-      suggested,
+  function submitCurlImport() {
+    try {
+      const parsed = parseCurl(curlDraft);
+      if (!METHODS.includes(parsed.method as HttpMethod)) {
+        showToast(`不支持的方法：${parsed.method}`);
+        return;
+      }
+      if (parsed.insecure) setInsecure(true);
+      loadRequestState({
+        method: parsed.method,
+        url: parsed.url,
+        headers: parsed.headers,
+        body: parsed.body,
+        auth: parsed.auth,
+        meta: serializeRequestMeta({
+          bodyMode: parsed.bodyMode,
+          formFields: parsed.formFields,
+          extractors: compactExtractors(extractors),
+        }),
+        saved:
+          currentSavedId != null
+            ? { id: currentSavedId, collectionId: currentCollectionId, name: currentSavedName }
+            : null,
+        tab: parsed.bodyMode === "form-data" || parsed.body ? "body" : "headers",
+      });
+      setShowCurlImport(false);
+      showToast(parsed.insecure ? "已导入 cURL，并允许不安全证书" : "已导入 cURL");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "导入失败");
+    }
+  }
+
+  async function onPickFormFile(index: number) {
+    const picked = await pickFile();
+    if (!picked) return;
+    setFormFields((prev) =>
+      persistFormFields(
+        prev.map((item, itemIndex) =>
+          itemIndex === index
+            ? {
+                ...item,
+                type: "file",
+                value: picked,
+                fileName: item.fileName || fileBaseName(picked),
+              }
+            : item,
+        ),
+      ),
     );
+  }
+
+  async function onPickTls(field: keyof TlsConfig) {
+    const picked = await pickFile([
+      {
+        name: field === "keyPath" ? "Private Key" : "Certificate",
+        extensions: field === "keyPath" ? ["pem", "key"] : ["pem", "crt", "cer"],
+      },
+    ]);
+    if (!picked) return;
+    setEnvTls((prev) => ({ ...prev, [field]: picked }));
+  }
+
+  async function onManualExtract(path: string, variable: string) {
+    if (!response) return;
+    const hits = extractByRules(response.body, [{ path, variable, enabled: true }]);
+    await applyHits(hits);
+    const hit = hits[0];
+    if (hit?.ok) showToast(`已写入 ${hit.variable}`);
+  }
+
+  async function onSaveResponseFile(text: string) {
+    if (!response) return;
+    const ext = looksLikeJson(text) ? "json" : looksLikeXml(text) ? "xml" : "txt";
+    const saved = await saveResponseBody(text, `tinypost-${response.status}-${Date.now()}.${ext}`);
     showToast(saved ? "已保存到文件" : "已取消保存");
   }
 
-  const displayBody = response
-    ? responsePretty
-      ? tryFormatJson(response.body)
-      : response.body
+  actionsRef.current = {
+    send: () => void sendRequest(),
+    save: () => void onOverwriteSave(),
+    saveEnv: () => void saveEnvEditor(),
+    importCurl: () => submitCurlImport(),
+    showEnv: showEnvEditor,
+    showCurl: showCurlImport,
+  };
+
+  const savedLabel = currentSavedName
+    ? `正在编辑：${currentSavedName}${
+        currentCollectionId
+          ? ` · ${collections.find((item) => item.id === currentCollectionId)?.name || "集合"}`
+          : ""
+      }`
     : "";
-  const responseSize = response
-    ? (response.sizeBytes ?? new Blob([response.body || ""]).size)
-    : 0;
   const timeoutSeconds = Math.round(timeoutMs / 1000);
-
-  function requestsOf(collectionId: number): SavedRequestRow[] {
-    return savedRequests.filter((item) => {
-      if (item.collection_id !== collectionId) return false;
-      if (!searchNeedle) return true;
-      return [item.name, item.method, item.url].some((part) =>
-        matchesQuery(part, searchNeedle),
-      );
-    });
-  }
-
-  function isCollectionExpanded(id: number): boolean {
-    if (searchNeedle) return true;
-    return expandedCollections.includes(id);
-  }
 
   return (
     <div className="app">
@@ -726,7 +1080,6 @@ function App() {
             <div className="brand-sub">本地 · 离线 · 内网可用</div>
           </div>
         </div>
-
         <div className="topbar-actions">
           <label className="env-picker">
             <span>环境</span>
@@ -773,643 +1126,129 @@ function App() {
             跟随重定向
           </label>
           <label className="insecure">
-            <input
-              type="checkbox"
-              checked={insecure}
-              onChange={(e) => setInsecure(e.target.checked)}
-            />
+            <input type="checkbox" checked={insecure} onChange={(e) => setInsecure(e.target.checked)} />
             允许不安全证书
           </label>
         </div>
       </header>
 
       <div className="layout">
-        <aside className="sidebar">
-          <div className="sidebar-tabs">
-            <button
-              type="button"
-              className={sidebarTab === "collections" ? "tab active" : "tab"}
-              onClick={() => setSidebarTab("collections")}
-            >
-              集合
-            </button>
-            <button
-              type="button"
-              className={sidebarTab === "history" ? "tab active" : "tab"}
-              onClick={() => setSidebarTab("history")}
-            >
-              历史
-            </button>
-          </div>
-
-          <div className="sidebar-search-wrap">
-            <input
-              className="sidebar-search"
-              value={sidebarSearch}
-              onChange={(e) => setSidebarSearch(e.target.value)}
-              placeholder={sidebarTab === "collections" ? "搜索集合或请求" : "搜索历史"}
-              aria-label="侧栏搜索"
-            />
-          </div>
-
-          {sidebarTab === "collections" ? (
-            <>
-              <div className="sidebar-head">
-                <h2>集合</h2>
-                <div className="sidebar-actions">
-                  <button type="button" className="ghost" onClick={() => void onCreateCollection()}>
-                    新建
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    导入
-                  </button>
-                </div>
-              </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="application/json,.json"
-                hidden
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void onImportFile(file);
-                }}
-              />
-              <div className="history-list">
-                {collections.length === 0 && (
-                  <p className="empty">还没有集合。可新建，或导入 Postman Collection。</p>
-                )}
-                {collections.length > 0 && visibleCollections.length === 0 && (
-                  <p className="empty">没有匹配的集合或请求。</p>
-                )}
-                {visibleCollections.map((collection) => {
-                  const requests = requestsOf(collection.id);
-                  const expanded = isCollectionExpanded(collection.id);
-                  return (
-                    <div key={collection.id} className="collection-block">
-                      <div className="collection-head">
-                        <button
-                          type="button"
-                          className="collection-toggle"
-                          onClick={() =>
-                            setExpandedCollections((prev) =>
-                              prev.includes(collection.id)
-                                ? prev.filter((id) => id !== collection.id)
-                                : [...prev, collection.id],
-                            )
-                          }
-                          onDoubleClick={(e) => {
-                            e.preventDefault();
-                            void onRenameCollection(collection);
-                          }}
-                        >
-                          <span>{expanded ? "▾" : "▸"}</span>
-                          <strong>{collection.name}</strong>
-                          <em>{requests.length}</em>
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => void onRenameCollection(collection)}
-                          aria-label="重命名集合"
-                          title="重命名"
-                        >
-                          重命名
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          onClick={() => void onDeleteCollection(collection.id)}
-                          aria-label="删除集合"
-                        >
-                          ×
-                        </button>
-                      </div>
-                      {expanded &&
-                        requests.map((item) => (
-                          <div key={item.id} className="saved-row">
-                            <button
-                              type="button"
-                              className={
-                                item.id === currentSavedId
-                                  ? "history-item active"
-                                  : "history-item"
-                              }
-                              onClick={() => loadSavedRequest(item)}
-                              onDoubleClick={(e) => {
-                                e.preventDefault();
-                                void onRenameSavedRequest(item);
-                              }}
-                            >
-                              <span className="method">{item.method}</span>
-                              <span className="history-url">{item.name}</span>
-                              <span className="history-meta">{item.url}</span>
-                            </button>
-                            <div className="row-actions">
-                              <button
-                                type="button"
-                                className="ghost"
-                                onClick={() => void onRenameSavedRequest(item)}
-                                aria-label="重命名请求"
-                                title="重命名"
-                              >
-                                重命名
-                              </button>
-                              <button
-                                type="button"
-                                className="ghost"
-                                onClick={() => void onDeleteSavedRequest(item.id)}
-                                aria-label="删除请求"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="sidebar-head">
-                <h2>历史</h2>
-                <button type="button" className="ghost" onClick={() => void onClearHistory()}>
-                  清空
-                </button>
-              </div>
-              <div className="history-list">
-                {history.length === 0 && (
-                  <p className="empty">还没有请求记录，发一条试试。</p>
-                )}
-                {history.length > 0 && filteredHistory.length === 0 && (
-                  <p className="empty">没有匹配的历史记录。</p>
-                )}
-                {filteredHistory.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="history-item"
-                    onClick={() => loadHistoryItem(item)}
-                  >
-                    <span className="method">{item.method}</span>
-                    <span className="history-url">{item.url}</span>
-                    <span className="history-meta">
-                      <span className={`status-badge compact tone-${statusTone(item.status)}`}>
-                        {item.status ?? "-"}
-                      </span>
-                      {item.duration_ms ?? "-"}ms
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-        </aside>
-
+        <Sidebar
+          tab={sidebarTab}
+          search={sidebarSearch}
+          collections={collections}
+          savedRequests={savedRequests}
+          history={history}
+          currentSavedId={currentSavedId}
+          expanded={expandedCollections}
+          onTab={setSidebarTab}
+          onSearch={setSidebarSearch}
+          onToggle={(id) =>
+            setExpandedCollections((prev) =>
+              prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
+            )
+          }
+          onCreate={() => void onCreateCollection()}
+          onImportFile={(file) => void onImportFile(file)}
+          onBackup={() => void onBackup()}
+          onRestore={() => void onRestore()}
+          onExportCollection={(collection) => void onExportCollection(collection)}
+          onRenameCollection={(collection) => void onRenameCollection(collection)}
+          onDeleteCollection={(id) => void onDeleteCollection(id)}
+          onLoadSaved={loadSavedRequest}
+          onRenameSaved={(item) => void onRenameSavedRequest(item)}
+          onDeleteSaved={(id) => void onDeleteSavedRequest(id)}
+          onClearHistory={() => void onClearHistory()}
+          onLoadHistory={loadHistoryItem}
+        />
         <main className="main">
-          <section className="composer">
-            <div className="url-row">
-              <select
-                value={method}
-                onChange={(e) => setMethod(e.target.value as HttpMethod)}
-                aria-label="请求方法"
-              >
-                {METHODS.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={url}
-                onChange={(e) => setComposerUrl(e.target.value)}
-                placeholder="支持变量，例如 {{baseUrl}}/api/users"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void sendRequest();
-                }}
-              />
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => void onOverwriteSave()}
-              >
-                保存
-              </button>
-              <button type="button" className="ghost save-as" onClick={() => void onSaveAs()}>
-                另存为
-              </button>
-              {sending ? (
-                <button type="button" className="danger" onClick={() => void cancelRequest()}>
-                  取消
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={!canSend}
-                  onClick={() => void sendRequest()}
-                >
-                  发送
-                </button>
-              )}
-            </div>
-            {currentSavedName && (
-              <div className="save-binding">
-                正在编辑：{currentSavedName}
-                {currentCollectionId
-                  ? ` · ${collections.find((c) => c.id === currentCollectionId)?.name || "集合"}`
-                  : ""}
-              </div>
-            )}
-
-            <div className="tabs composer-tabs">
-              <button
-                type="button"
-                className={composerTab === "auth" ? "tab active" : "tab"}
-                onClick={() => setComposerTab("auth")}
-              >
-                Auth
-              </button>
-              <button
-                type="button"
-                className={composerTab === "query" ? "tab active" : "tab"}
-                onClick={() => setComposerTab("query")}
-              >
-                Query
-              </button>
-              <button
-                type="button"
-                className={composerTab === "headers" ? "tab active" : "tab"}
-                onClick={() => setComposerTab("headers")}
-              >
-                Headers
-              </button>
-              <button
-                type="button"
-                className={composerTab === "body" ? "tab active" : "tab"}
-                onClick={() => setComposerTab("body")}
-              >
-                Body
-              </button>
-            </div>
-
-            {composerTab === "auth" && (
-              <div className="auth-panel">
-                <label className="field">
-                  <span>类型</span>
-                  <select
-                    value={auth.type}
-                    onChange={(e) =>
-                      setAuth((prev) => ({
-                        ...prev,
-                        type: e.target.value as AuthConfig["type"],
-                      }))
-                    }
-                  >
-                    <option value="none">No Auth</option>
-                    <option value="bearer">Bearer Token</option>
-                    <option value="basic">Basic Auth</option>
-                    <option value="apikey">API Key</option>
-                  </select>
-                </label>
-
-                {auth.type === "bearer" && (
-                  <label className="field">
-                    <span>Token</span>
-                    <input
-                      value={auth.bearerToken || ""}
-                      onChange={(e) =>
-                        setAuth((prev) => ({ ...prev, bearerToken: e.target.value }))
-                      }
-                      placeholder="支持 {{token}}"
-                    />
-                  </label>
-                )}
-
-                {auth.type === "basic" && (
-                  <div className="auth-grid">
-                    <label className="field">
-                      <span>Username</span>
-                      <input
-                        value={auth.basicUsername || ""}
-                        onChange={(e) =>
-                          setAuth((prev) => ({
-                            ...prev,
-                            basicUsername: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Password</span>
-                      <input
-                        type="password"
-                        value={auth.basicPassword || ""}
-                        onChange={(e) =>
-                          setAuth((prev) => ({
-                            ...prev,
-                            basicPassword: e.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
-                )}
-
-                {auth.type === "apikey" && (
-                  <div className="auth-grid">
-                    <label className="field">
-                      <span>Key</span>
-                      <input
-                        value={auth.apiKeyKey || ""}
-                        onChange={(e) =>
-                          setAuth((prev) => ({ ...prev, apiKeyKey: e.target.value }))
-                        }
-                        placeholder="X-API-Key"
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Value</span>
-                      <input
-                        value={auth.apiKeyValue || ""}
-                        onChange={(e) =>
-                          setAuth((prev) => ({ ...prev, apiKeyValue: e.target.value }))
-                        }
-                        placeholder="支持 {{token}}"
-                      />
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {composerTab === "query" && (
-              <div className="headers">
-                {queryParams.map((item, index) => (
-                  <div
-                    className={isRowEnabled(item) ? "header-row with-toggle" : "header-row with-toggle disabled"}
-                    key={index}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isRowEnabled(item)}
-                      onChange={(e) => updateQuery(index, { enabled: e.target.checked })}
-                      aria-label="启用查询参数"
-                    />
-                    <input
-                      placeholder="Key"
-                      value={item.key}
-                      onChange={(e) => updateQuery(index, { key: e.target.value })}
-                    />
-                    <input
-                      placeholder="Value，可用 {{var}}"
-                      value={item.value}
-                      onChange={(e) => updateQuery(index, { value: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => removeQuery(index)}
-                      aria-label="删除查询参数"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {composerTab === "headers" && (
-              <div className="headers">
-                {headers.map((header, index) => (
-                  <div
-                    className={isRowEnabled(header) ? "header-row with-toggle" : "header-row with-toggle disabled"}
-                    key={index}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isRowEnabled(header)}
-                      onChange={(e) => updateHeader(index, { enabled: e.target.checked })}
-                      aria-label="启用请求头"
-                    />
-                    <input
-                      placeholder="Key"
-                      value={header.key}
-                      onChange={(e) => updateHeader(index, { key: e.target.value })}
-                    />
-                    <input
-                      placeholder="Value，可用 {{var}}"
-                      value={header.value}
-                      onChange={(e) => updateHeader(index, { value: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => removeHeader(index)}
-                      aria-label="删除请求头"
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {composerTab === "body" && (
-              <textarea
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                placeholder='JSON / 文本，例如 {"name":"tinypost"}，也支持 {{var}}'
-                disabled={method === "GET" || method === "HEAD"}
-              />
-            )}
-          </section>
-
-          <section
-            className={
-              sending
-                ? "response is-loading"
-                : response
-                  ? `response tone-${statusTone(response.status)}`
-                  : "response"
-            }
-          >
-            <div className="response-head">
-              <h2>响应</h2>
-              {sending && (
-                <div className="response-meta">
-                  <span className="status-badge tone-pending">发送中</span>
-                  <span>{elapsedMs} ms</span>
-                </div>
-              )}
-              {response && !sending && (
-                <div className="response-meta">
-                  <span className={`status-badge tone-${statusTone(response.status)}`}>
-                    {response.status} {response.statusText}
-                  </span>
-                  <span>{response.durationMs} ms</span>
-                  <span>{formatBytes(responseSize)}</span>
-                  {response.url && <span className="final-url" title={response.url}>{response.url}</span>}
-                </div>
-              )}
-              {response && !sending && (
-                <div className="response-tools">
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => setResponsePretty((prev) => !prev)}
-                  >
-                    {responsePretty ? "Raw" : "Pretty"}
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() => void copyResponse(displayBody)}
-                  >
-                    复制
-                  </button>
-                  <button type="button" className="ghost" onClick={() => void onSaveResponseFile()}>
-                    存文件
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {error && !sending && <div className="error-box">{error}</div>}
-
-            {sending && (
-              <div className="response-loading" aria-live="polite" aria-busy="true">
-                <span className="spinner" aria-hidden="true" />
-                <div>
-                  <strong>请求发送中…</strong>
-                  <p>等待服务器返回，已用时 {elapsedMs} ms</p>
-                </div>
-              </div>
-            )}
-
-            {!error && !response && !sending && (
-              <p className="empty">
-                响应显示在这里。可用 {"{{baseUrl}}"} / {"{{token}}"}，数据仅存本机。
-              </p>
-            )}
-
-            {response && !sending && (
-              <>
-                <div className="tabs">
-                  <button
-                    type="button"
-                    className={responseTab === "body" ? "tab active" : "tab"}
-                    onClick={() => setResponseTab("body")}
-                  >
-                    Body
-                  </button>
-                  <button
-                    type="button"
-                    className={responseTab === "headers" ? "tab active" : "tab"}
-                    onClick={() => setResponseTab("headers")}
-                  >
-                    Headers
-                  </button>
-                  {response.redirects?.length ? (
-                    <button
-                      type="button"
-                      className={responseTab === "redirects" ? "tab active" : "tab"}
-                      onClick={() => setResponseTab("redirects")}
-                    >
-                      Redirects ({response.redirects.length})
-                    </button>
-                  ) : null}
-                </div>
-                {responseTab === "body" ? (
-                  <pre className="code-block">{displayBody}</pre>
-                ) : responseTab === "headers" ? (
-                  <pre className="code-block">
-                    {Object.entries(response.headers)
-                      .map(([k, v]) => `${k}: ${v}`)
-                      .join("\n")}
-                  </pre>
-                ) : (
-                  <pre className="code-block">
-                    {(response.redirects || [])
-                      .map(
-                        (hop, index) =>
-                          `${index + 1}. ${hop.status} ${hop.url}\n   → ${hop.location}`,
-                      )
-                      .join("\n")}
-                  </pre>
-                )}
-              </>
-            )}
-          </section>
+          <RequestEditor
+            method={method}
+            url={url}
+            sending={sending}
+            canSend={canSend}
+            savedLabel={savedLabel}
+            composerTab={composerTab}
+            auth={auth}
+            queryParams={queryParams}
+            headers={headers}
+            body={body}
+            bodyMode={bodyMode}
+            formFields={formFields}
+            extractors={extractors}
+            bodyDisabled={method === "GET" || method === "HEAD"}
+            onMethod={setMethod}
+            onUrl={setComposerUrl}
+            onSend={() => void sendRequest()}
+            onCancel={() => void cancelRequest()}
+            onSave={() => void onOverwriteSave()}
+            onSaveAs={() => void onSaveAs()}
+            onCopyCurl={() => void copyText(resolvedCurl(), "已复制 cURL")}
+            onOpenCurlImport={() => setShowCurlImport(true)}
+            onTab={setComposerTab}
+            onAuth={setAuth}
+            onUpdateQuery={updateQuery}
+            onRemoveQuery={removeQuery}
+            onUpdateHeader={updateHeader}
+            onRemoveHeader={removeHeader}
+            onBody={setBody}
+            onBodyMode={setBodyMode}
+            onUpdateFormField={updateFormField}
+            onRemoveFormField={removeFormField}
+            onPickFormFile={(index) => void onPickFormFile(index)}
+            onUpdateExtractor={updateExtractor}
+            onRemoveExtractor={removeExtractor}
+          />
+          <ResponseView
+            sending={sending}
+            elapsedMs={elapsedMs}
+            error={error}
+            response={response}
+            responsePretty={responsePretty}
+            responseTab={responseTab}
+            extractNotice={extractNotice}
+            onTogglePretty={() => setResponsePretty((prev) => !prev)}
+            onTab={setResponseTab}
+            onCopy={(text) => void copyText(text)}
+            onCopyCurl={() => void copyText(resolvedCurl(), "已复制 cURL")}
+            onSaveFile={(text) => void onSaveResponseFile(text)}
+            onExtract={(path, variable) => void onManualExtract(path, variable)}
+          />
         </main>
       </div>
 
       {showEnvEditor && (
-        <div className="modal-backdrop" onClick={() => setShowEnvEditor(false)}>
-          <div
-            className="modal"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-label="编辑环境"
-          >
-            <div className="modal-head">
-              <h3>{editingEnvId ? "编辑环境" : "新建环境"}</h3>
-              <button type="button" className="ghost" onClick={() => setShowEnvEditor(false)}>
-                ×
-              </button>
-            </div>
-            <label className="field">
-              <span>名称</span>
-              <input value={envName} onChange={(e) => setEnvName(e.target.value)} />
-            </label>
-            <div className="panel-title">变量</div>
-            <div className="headers">
-              {envVars.map((item, index) => (
-                <div className="header-row" key={index}>
-                  <input
-                    placeholder="key，如 baseUrl"
-                    value={item.key}
-                    onChange={(e) => updateEnvVar(index, { key: e.target.value })}
-                  />
-                  <input
-                    placeholder="value"
-                    value={item.value}
-                    onChange={(e) => updateEnvVar(index, { value: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    className="ghost"
-                    onClick={() =>
-                      setEnvVars((prev) => {
-                        const next = prev.filter((_, i) => i !== index);
-                        return next.length ? next : [emptyVariable()];
-                      })
-                    }
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-            <div className="modal-actions">
-              {editingEnvId && (
-                <button type="button" className="ghost" onClick={() => void onDeleteEnvironment()}>
-                  删除环境
-                </button>
-              )}
-              <button type="button" className="primary" onClick={() => void saveEnvEditor()}>
-                保存
-              </button>
-            </div>
-          </div>
-        </div>
+        <EnvEditor
+          editing={editingEnvId != null}
+          name={envName}
+          vars={envVars}
+          tls={envTls}
+          passphrase={envPassphrase}
+          onName={setEnvName}
+          onVar={updateEnvVar}
+          onRemoveVar={(index) =>
+            setEnvVars((prev) => {
+              const next = prev.filter((_, i) => i !== index);
+              return next.length ? next : [emptyVariable()];
+            })
+          }
+          onTls={(patch) => setEnvTls((prev) => ({ ...prev, ...patch }))}
+          onPassphrase={setEnvPassphrase}
+          onPickTls={(field) => void onPickTls(field)}
+          onClose={() => setShowEnvEditor(false)}
+          onSave={() => void saveEnvEditor()}
+          onDelete={() => void onDeleteEnvironment()}
+          onExport={() => void onExportEnvironment()}
+        />
+      )}
+
+      {showCurlImport && (
+        <CurlImportDialog
+          value={curlDraft}
+          onChange={setCurlDraft}
+          onClose={() => setShowCurlImport(false)}
+          onSubmit={submitCurlImport}
+        />
       )}
 
       {toast && <div className="toast">{toast}</div>}

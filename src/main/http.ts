@@ -1,16 +1,29 @@
+import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import path from "node:path";
 import { URL } from "node:url";
+import { buildMultipart, withMultipartContentType } from "../shared/multipart";
 import type {
   HeaderItem,
   HttpRequestPayload,
   HttpResponsePayload,
+  MultipartPartPayload,
   RedirectHop,
+  TlsRequestConfig,
 } from "../shared/types";
 import { isRowEnabled } from "../shared/types";
 
 const REDIRECT_CODES = new Set([301, 302, 303, 307, 308]);
 const MAX_REDIRECTS = 10;
+const encoder = new TextEncoder();
+
+interface TlsMaterial {
+  cert: Buffer;
+  key: Buffer;
+  ca?: Buffer;
+  passphrase?: string;
+}
 
 interface InflightSlot {
   cancelled: boolean;
@@ -45,6 +58,46 @@ function locationHeader(headers: http.IncomingHttpHeaders): string | undefined {
   const raw = headers.location;
   if (Array.isArray(raw)) return raw[0];
   return raw;
+}
+
+function loadMultipart(parts: MultipartPartPayload[]): { body: Uint8Array; contentType: string } {
+  const built = buildMultipart(
+    parts.map((part) => {
+      const name = part.name.trim();
+      if (!name) throw new Error("multipart 字段名为空");
+      if (part.filePath) {
+        const filePath = part.filePath;
+        if (!fs.existsSync(filePath)) throw new Error(`文件不存在：${filePath}`);
+        return {
+          name,
+          filename: part.fileName || path.basename(filePath),
+          contentType: part.contentType || "application/octet-stream",
+          data: new Uint8Array(fs.readFileSync(filePath)),
+        };
+      }
+      return { name, data: part.text ?? "" };
+    }),
+  );
+  return { body: built.body, contentType: built.contentType };
+}
+
+function loadTls(tls: TlsRequestConfig | undefined, isHttps: boolean): TlsMaterial | undefined {
+  if (!tls) return undefined;
+  const certPath = tls.certPath?.trim() || "";
+  const keyPath = tls.keyPath?.trim() || "";
+  const caPath = tls.caPath?.trim() || "";
+  if (!certPath && !keyPath && !caPath && !tls.passphrase) return undefined;
+  if (!isHttps) throw new Error("客户端证书仅适用于 https");
+  if (!certPath || !keyPath) throw new Error("客户端证书需要同时选择 cert 与 key");
+  if (!fs.existsSync(certPath)) throw new Error(`证书文件不存在：${certPath}`);
+  if (!fs.existsSync(keyPath)) throw new Error(`私钥文件不存在：${keyPath}`);
+  if (caPath && !fs.existsSync(caPath)) throw new Error(`CA 文件不存在：${caPath}`);
+  return {
+    cert: fs.readFileSync(certPath),
+    key: fs.readFileSync(keyPath),
+    ca: caPath ? fs.readFileSync(caPath) : undefined,
+    passphrase: tls.passphrase?.trim() || undefined,
+  };
 }
 
 export function httpCancel(requestId = "default"): boolean {
@@ -89,7 +142,8 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
     method: string,
     currentUrl: string,
     headers: Record<string, string>,
-    body: string,
+    body: Uint8Array,
+    tlsMaterial: TlsMaterial | undefined,
     hop: number,
   ): Promise<HttpResponsePayload> {
     return new Promise((resolve, reject) => {
@@ -112,13 +166,13 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
 
       const isHttps = parsed.protocol === "https:";
       const lib = isHttps ? https : http;
-      const sendBody = body.length > 0 && method !== "GET" && method !== "HEAD";
+      const sendBody = body.byteLength > 0 && method !== "GET" && method !== "HEAD";
       const reqHeaders = { ...headers };
       for (const key of Object.keys(reqHeaders)) {
         if (key.toLowerCase() === "content-length") delete reqHeaders[key];
       }
       if (sendBody) {
-        reqHeaders["Content-Length"] = Buffer.byteLength(body).toString();
+        reqHeaders["Content-Length"] = String(body.byteLength);
       }
 
       const req = lib.request(
@@ -130,6 +184,10 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
           method,
           headers: reqHeaders,
           rejectUnauthorized: isHttps ? !insecure : undefined,
+          cert: isHttps ? tlsMaterial?.cert : undefined,
+          key: isHttps ? tlsMaterial?.key : undefined,
+          ca: isHttps ? tlsMaterial?.ca : undefined,
+          passphrase: isHttps ? tlsMaterial?.passphrase : undefined,
         },
         (res) => {
           const chunks: Buffer[] = [];
@@ -161,8 +219,9 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
                 location: nextUrl,
               });
               const nextMethod = hopMethod(status, method);
-              const nextBody = nextMethod === "GET" || nextMethod === "HEAD" ? "" : body;
-              resolve(sendOnce(nextMethod, nextUrl, headers, nextBody, hop + 1));
+              const nextBody =
+                nextMethod === "GET" || nextMethod === "HEAD" ? new Uint8Array() : body;
+              resolve(sendOnce(nextMethod, nextUrl, headers, nextBody, tlsMaterial, hop + 1));
               return;
             }
 
@@ -203,17 +262,34 @@ export function httpSend(payload: HttpRequestPayload): Promise<HttpResponsePaylo
     });
   }
 
-  return sendOnce(
-    (payload.method || "GET").trim().toUpperCase(),
-    rawUrl,
-    headerRecord(payload.headers),
-    payload.body || "",
-    0,
-  ).finally(() => {
-    if (inflight.get(requestId) === slot) {
-      inflight.delete(requestId);
+  const method = (payload.method || "GET").trim().toUpperCase();
+  let headers = headerRecord(payload.headers);
+  let body = encoder.encode(payload.body || "");
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    inflight.delete(requestId);
+    return Promise.reject(new Error("URL 无效"));
+  }
+  const isHttps = parsedUrl.protocol === "https:";
+
+  try {
+    if (payload.multipart && payload.multipart.length > 0 && method !== "GET" && method !== "HEAD") {
+      const multipart = loadMultipart(payload.multipart);
+      headers = withMultipartContentType(headers, multipart.contentType);
+      body = multipart.body;
     }
-  });
+    const tlsMaterial = loadTls(payload.tls, isHttps);
+    return sendOnce(method, rawUrl, headers, body, tlsMaterial, 0).finally(() => {
+      if (inflight.get(requestId) === slot) {
+        inflight.delete(requestId);
+      }
+    });
+  } catch (error) {
+    inflight.delete(requestId);
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
+  }
 }
 
 export type { HeaderItem };

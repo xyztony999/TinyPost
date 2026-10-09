@@ -4,13 +4,13 @@ import { createRequire } from "node:module";
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
 import type {
   AppSettings,
-  AuthConfig,
   CollectionRow,
   EnvironmentRow,
-  HeaderItem,
   HistoryRow,
-  HttpResponsePayload,
   SavedRequestRow,
+  SaveHistoryInput,
+  SaveRequestInput,
+  UpsertEnvironmentInput,
   VariableItem,
 } from "../shared/types";
 import { DEFAULT_SETTINGS, defaultAuth } from "../shared/types";
@@ -106,8 +106,11 @@ CREATE TABLE IF NOT EXISTS settings (
 
   ensureColumn("saved_requests", "auth", `TEXT NOT NULL DEFAULT '{"type":"none"}'`);
   ensureColumn("saved_requests", "query", `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn("saved_requests", "meta", `TEXT NOT NULL DEFAULT '{}'`);
   ensureColumn("request_history", "auth", `TEXT NOT NULL DEFAULT '{"type":"none"}'`);
   ensureColumn("request_history", "query", `TEXT NOT NULL DEFAULT '[]'`);
+  ensureColumn("request_history", "meta", `TEXT NOT NULL DEFAULT '{}'`);
+  ensureColumn("environments", "tls", `TEXT NOT NULL DEFAULT '{}'`);
 }
 
 function tableColumns(table: string): string[] {
@@ -141,20 +144,12 @@ function run(sql: string, params: unknown[] = []): number {
   return id;
 }
 
-export function saveHistory(input: {
-  method: string;
-  url: string;
-  headers: HeaderItem[];
-  body: string;
-  auth: AuthConfig;
-  query: string;
-  response: HttpResponsePayload;
-}): void {
+export function saveHistory(input: SaveHistoryInput): void {
   run(
     `INSERT INTO request_history
       (method, url, request_headers, request_body, status, response_headers,
-       response_body, duration_ms, auth, query)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       response_body, duration_ms, auth, query, meta)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.method,
       input.url,
@@ -166,6 +161,7 @@ export function saveHistory(input: {
       input.response.durationMs,
       JSON.stringify(input.auth || defaultAuth()),
       input.query || "[]",
+      input.meta || "{}",
     ],
   );
 }
@@ -173,7 +169,7 @@ export function saveHistory(input: {
 export function listHistory(limit = 50): HistoryRow[] {
   return queryAll<HistoryRow>(
     `SELECT id, method, url, request_headers, request_body, status,
-            response_headers, response_body, duration_ms, created_at, auth, query
+            response_headers, response_body, duration_ms, created_at, auth, query, meta
      FROM request_history
      ORDER BY id DESC
      LIMIT ?`,
@@ -187,7 +183,7 @@ export function clearHistory(): void {
 
 export function listEnvironments(): EnvironmentRow[] {
   return queryAll<EnvironmentRow>(
-    `SELECT id, name, variables, is_active, created_at
+    `SELECT id, name, variables, is_active, created_at, tls
      FROM environments
      ORDER BY id ASC`,
   );
@@ -217,17 +213,14 @@ export function setActiveEnvironment(id: number): void {
   run("UPDATE environments SET is_active = 1 WHERE id = ?", [id]);
 }
 
-export function upsertEnvironment(input: {
-  id?: number;
-  name: string;
-  variables: VariableItem[];
-  makeActive?: boolean;
-}): number {
+export function upsertEnvironment(input: UpsertEnvironmentInput): number {
   const variables = JSON.stringify(input.variables);
+  const tls = JSON.stringify(input.tls ?? { certPath: "", keyPath: "", caPath: "" });
   if (input.id) {
-    run(`UPDATE environments SET name = ?, variables = ? WHERE id = ?`, [
+    run(`UPDATE environments SET name = ?, variables = ?, tls = ? WHERE id = ?`, [
       input.name,
       variables,
+      tls,
       input.id,
     ]);
     if (input.makeActive) setActiveEnvironment(input.id);
@@ -235,9 +228,9 @@ export function upsertEnvironment(input: {
   }
   if (input.makeActive) run("UPDATE environments SET is_active = 0");
   return run(
-    `INSERT INTO environments (name, variables, is_active)
-     VALUES (?, ?, ?)`,
-    [input.name, variables, input.makeActive ? 1 : 0],
+    `INSERT INTO environments (name, variables, is_active, tls)
+     VALUES (?, ?, ?, ?)`,
+    [input.name, variables, input.makeActive ? 1 : 0, tls],
   );
 }
 
@@ -271,7 +264,7 @@ export function deleteCollection(id: number): void {
 export function listSavedRequests(collectionId?: number): SavedRequestRow[] {
   if (collectionId != null) {
     return queryAll<SavedRequestRow>(
-      `SELECT id, collection_id, name, method, url, headers, body, auth, query, created_at
+      `SELECT id, collection_id, name, method, url, headers, body, auth, query, meta, created_at
        FROM saved_requests
        WHERE collection_id = ?
        ORDER BY id ASC`,
@@ -279,31 +272,22 @@ export function listSavedRequests(collectionId?: number): SavedRequestRow[] {
     );
   }
   return queryAll<SavedRequestRow>(
-    `SELECT id, collection_id, name, method, url, headers, body, auth, query, created_at
+    `SELECT id, collection_id, name, method, url, headers, body, auth, query, meta, created_at
      FROM saved_requests
      ORDER BY id DESC`,
   );
 }
 
-export function saveRequest(input: {
-  id?: number;
-  collectionId: number;
-  name: string;
-  method: string;
-  url: string;
-  headers: HeaderItem[];
-  body: string;
-  auth: AuthConfig;
-  query?: string;
-}): number {
+export function saveRequest(input: SaveRequestInput): number {
   const headers = JSON.stringify(input.headers);
   const auth = JSON.stringify(input.auth || defaultAuth());
   const query = input.query || "[]";
+  const meta = input.meta || "{}";
   if (input.id) {
     run(
       `UPDATE saved_requests
        SET collection_id = ?, name = ?, method = ?, url = ?,
-           headers = ?, body = ?, auth = ?, query = ?
+           headers = ?, body = ?, auth = ?, query = ?, meta = ?
        WHERE id = ?`,
       [
         input.collectionId,
@@ -314,6 +298,7 @@ export function saveRequest(input: {
         input.body,
         auth,
         query,
+        meta,
         input.id,
       ],
     );
@@ -321,8 +306,8 @@ export function saveRequest(input: {
   }
   return run(
     `INSERT INTO saved_requests
-      (collection_id, name, method, url, headers, body, auth, query)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      (collection_id, name, method, url, headers, body, auth, query, meta)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.collectionId,
       input.name,
@@ -332,6 +317,7 @@ export function saveRequest(input: {
       input.body,
       auth,
       query,
+      meta,
     ],
   );
 }
@@ -368,4 +354,47 @@ export function saveSettings(settings: AppSettings): void {
 
 function upsertSetting(key: string, value: string): void {
   run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [key, value]);
+}
+
+export function backupDatabase(destPath: string): void {
+  if (!db || !dbPath) throw new Error("数据库未初始化");
+  persist();
+  fs.copyFileSync(dbPath, destPath);
+}
+
+export function restoreDatabase(srcPath: string): void {
+  if (!SQL || !dbPath) throw new Error("数据库未初始化");
+  if (!fs.existsSync(srcPath)) throw new Error("备份文件不存在");
+  const bytes = fs.readFileSync(srcPath);
+  let probe: Database | null = null;
+  try {
+    probe = new SQL.Database(bytes);
+    probe.exec("SELECT name FROM sqlite_master LIMIT 1");
+  } catch {
+    throw new Error("该文件不是有效的 TinyPost 数据库备份");
+  } finally {
+    probe?.close();
+  }
+
+  if (db) {
+    persist();
+    db.close();
+    db = null;
+  }
+  const safety = `${dbPath}.before-restore`;
+  if (fs.existsSync(dbPath)) fs.copyFileSync(dbPath, safety);
+  try {
+    fs.copyFileSync(srcPath, dbPath);
+    db = new SQL.Database(fs.readFileSync(dbPath));
+    migrate();
+    persist();
+    fs.rmSync(safety, { force: true });
+  } catch (error) {
+    if (fs.existsSync(safety)) fs.copyFileSync(safety, dbPath);
+    if (SQL && fs.existsSync(dbPath)) {
+      db = new SQL.Database(fs.readFileSync(dbPath));
+      migrate();
+    }
+    throw error instanceof Error ? error : new Error("恢复失败");
+  }
 }

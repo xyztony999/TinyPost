@@ -1,11 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   AppSettings,
-  AuthConfig,
-  HeaderItem,
+  FileFilter,
   HttpRequestPayload,
   HttpResponsePayload,
-  VariableItem,
+  SaveHistoryInput,
+  SaveRequestInput,
+  UpsertEnvironmentInput,
 } from "../shared/types";
 
 const api = {
@@ -14,15 +15,7 @@ const api = {
   httpCancel: (requestId?: string): Promise<boolean> =>
     ipcRenderer.invoke("http:cancel", requestId),
 
-  saveHistory: (input: {
-    method: string;
-    url: string;
-    headers: HeaderItem[];
-    body: string;
-    auth: AuthConfig;
-    query: string;
-    response: HttpResponsePayload;
-  }) => ipcRenderer.invoke("db:saveHistory", input),
+  saveHistory: (input: SaveHistoryInput) => ipcRenderer.invoke("db:saveHistory", input),
 
   listHistory: (limit?: number) => ipcRenderer.invoke("db:listHistory", limit),
   clearHistory: () => ipcRenderer.invoke("db:clearHistory"),
@@ -30,12 +23,8 @@ const api = {
   ensureDefaultEnvironment: () => ipcRenderer.invoke("db:ensureDefaultEnvironment"),
   listEnvironments: () => ipcRenderer.invoke("db:listEnvironments"),
   setActiveEnvironment: (id: number) => ipcRenderer.invoke("db:setActiveEnvironment", id),
-  upsertEnvironment: (input: {
-    id?: number;
-    name: string;
-    variables: VariableItem[];
-    makeActive?: boolean;
-  }) => ipcRenderer.invoke("db:upsertEnvironment", input),
+  upsertEnvironment: (input: UpsertEnvironmentInput) =>
+    ipcRenderer.invoke("db:upsertEnvironment", input),
   deleteEnvironment: (id: number) => ipcRenderer.invoke("db:deleteEnvironment", id),
 
   listCollections: () => ipcRenderer.invoke("db:listCollections"),
@@ -45,17 +34,7 @@ const api = {
   deleteCollection: (id: number) => ipcRenderer.invoke("db:deleteCollection", id),
   listSavedRequests: (collectionId?: number) =>
     ipcRenderer.invoke("db:listSavedRequests", collectionId),
-  saveRequest: (input: {
-    id?: number;
-    collectionId: number;
-    name: string;
-    method: string;
-    url: string;
-    headers: HeaderItem[];
-    body: string;
-    auth: AuthConfig;
-    query?: string;
-  }) => ipcRenderer.invoke("db:saveRequest", input),
+  saveRequest: (input: SaveRequestInput) => ipcRenderer.invoke("db:saveRequest", input),
   renameSavedRequest: (id: number, name: string) =>
     ipcRenderer.invoke("db:renameSavedRequest", id, name),
   deleteSavedRequest: (id: number) => ipcRenderer.invoke("db:deleteSavedRequest", id),
@@ -64,6 +43,11 @@ const api = {
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("db:saveSettings", settings),
   saveResponseBody: (body: string, suggestedName: string) =>
     ipcRenderer.invoke("dialog:saveResponse", body, suggestedName),
+  pickFile: (filters?: FileFilter[]) => ipcRenderer.invoke("dialog:pickFile", filters),
+  saveTextFile: (contents: string, suggestedName: string) =>
+    ipcRenderer.invoke("dialog:saveText", contents, suggestedName),
+  backupDatabase: () => ipcRenderer.invoke("dialog:backupDatabase"),
+  restoreDatabase: () => ipcRenderer.invoke("dialog:restoreDatabase"),
 };
 
 contextBridge.exposeInMainWorld("tinypost", api);

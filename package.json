@@ -22,15 +22,18 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "vitest run",
     "dist:win": "npm run build && electron-builder --win --x64",
     "dist:linux-arm64": "npm run build && electron-builder --linux --arm64",
     "dist:deb": "bash scripts/pack-deb.sh"
   },
   "dependencies": {
+    "codemirror": "^5.65.18",
     "sql.js": "^1.12.0"
   },
   "devDependencies": {
     "@rollup/wasm-node": "4.62.3",
+    "@types/codemirror": "^5.60.16",
     "@types/node": "^22.5.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
@@ -43,7 +46,8 @@
     "react-dom": "^19.1.0",
     "rollup": "npm:@rollup/wasm-node@4.62.3",
     "typescript": "~5.8.3",
-    "vite": "^5.4.3"
+    "vite": "^5.4.3",
+    "vitest": "^2.1.9"
   },
   "overrides": {
     "rollup": "npm:@rollup/wasm-node@4.62.3"

@@ -4,11 +4,16 @@ import * as db from "./db";
 import { httpCancel, httpSend } from "./http";
 import type {
   AppSettings,
-  AuthConfig,
-  HeaderItem,
+  FileFilter,
   HttpRequestPayload,
-  VariableItem,
+  SaveHistoryInput,
+  SaveRequestInput,
+  UpsertEnvironmentInput,
 } from "../shared/types";
+
+function targetWindow(): BrowserWindow | undefined {
+  return BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+}
 
 export function registerIpc(): void {
   ipcMain.handle("http:send", async (_event, payload: HttpRequestPayload) => {
@@ -16,7 +21,7 @@ export function registerIpc(): void {
   });
   ipcMain.handle("http:cancel", (_e, requestId?: string) => httpCancel(requestId));
 
-  ipcMain.handle("db:saveHistory", (_e, input) => {
+  ipcMain.handle("db:saveHistory", (_e, input: SaveHistoryInput) => {
     db.saveHistory(input);
   });
   ipcMain.handle("db:listHistory", (_e, limit?: number) => db.listHistory(limit));
@@ -29,17 +34,8 @@ export function registerIpc(): void {
   ipcMain.handle("db:setActiveEnvironment", (_e, id: number) => {
     db.setActiveEnvironment(id);
   });
-  ipcMain.handle(
-    "db:upsertEnvironment",
-    (
-      _e,
-      input: {
-        id?: number;
-        name: string;
-        variables: VariableItem[];
-        makeActive?: boolean;
-      },
-    ) => db.upsertEnvironment(input),
+  ipcMain.handle("db:upsertEnvironment", (_e, input: UpsertEnvironmentInput) =>
+    db.upsertEnvironment(input),
   );
   ipcMain.handle("db:deleteEnvironment", (_e, id: number) => {
     db.deleteEnvironment(id);
@@ -56,23 +52,7 @@ export function registerIpc(): void {
   ipcMain.handle("db:listSavedRequests", (_e, collectionId?: number) =>
     db.listSavedRequests(collectionId),
   );
-  ipcMain.handle(
-    "db:saveRequest",
-    (
-      _e,
-      input: {
-        id?: number;
-        collectionId: number;
-        name: string;
-        method: string;
-        url: string;
-        headers: HeaderItem[];
-        body: string;
-        auth: AuthConfig;
-        query?: string;
-      },
-    ) => db.saveRequest(input),
-  );
+  ipcMain.handle("db:saveRequest", (_e, input: SaveRequestInput) => db.saveRequest(input));
   ipcMain.handle("db:renameSavedRequest", (_e, id: number, name: string) => {
     db.renameSavedRequest(id, name);
   });
@@ -85,23 +65,77 @@ export function registerIpc(): void {
     db.saveSettings(settings);
   });
 
+  ipcMain.handle("dialog:saveResponse", async (_e, body: string, suggestedName: string) => {
+    return saveText(body, suggestedName, [
+      { name: "Text", extensions: ["txt", "json", "xml", "html", "csv"] },
+      { name: "All Files", extensions: ["*"] },
+    ]);
+  });
+
+  ipcMain.handle("dialog:pickFile", async (_e, filters?: FileFilter[]) => {
+    const win = targetWindow();
+    const options = {
+      properties: ["openFile"] as "openFile"[],
+      filters: filters?.length ? filters : undefined,
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return null;
+    return result.filePaths[0];
+  });
+
   ipcMain.handle(
-    "dialog:saveResponse",
-    async (_e, body: string, suggestedName: string) => {
-      const win = BrowserWindow.getFocusedWindow();
-      const options = {
-        defaultPath: suggestedName,
-        filters: [
-          { name: "Text", extensions: ["txt", "json", "xml", "html", "csv"] },
-          { name: "All Files", extensions: ["*"] },
-        ],
-      };
-      const result = win
-        ? await dialog.showSaveDialog(win, options)
-        : await dialog.showSaveDialog(options);
-      if (result.canceled || !result.filePath) return false;
-      fs.writeFileSync(result.filePath, body ?? "", "utf8");
-      return true;
+    "dialog:saveText",
+    async (_e, contents: string, suggestedName: string) => {
+      return saveText(contents, suggestedName, [
+        { name: "JSON", extensions: ["json"] },
+        { name: "All Files", extensions: ["*"] },
+      ]);
     },
   );
+
+  ipcMain.handle("dialog:backupDatabase", async () => {
+    const win = targetWindow();
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const options = {
+      defaultPath: `tinypost-backup-${stamp}.db`,
+      filters: [{ name: "TinyPost Backup", extensions: ["db"] }],
+    };
+    const result = win
+      ? await dialog.showSaveDialog(win, options)
+      : await dialog.showSaveDialog(options);
+    if (result.canceled || !result.filePath) return false;
+    db.backupDatabase(result.filePath);
+    return true;
+  });
+
+  ipcMain.handle("dialog:restoreDatabase", async () => {
+    const win = targetWindow();
+    const options = {
+      filters: [{ name: "TinyPost Backup", extensions: ["db"] }],
+      properties: ["openFile"] as "openFile"[],
+    };
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return false;
+    db.restoreDatabase(result.filePaths[0]);
+    return true;
+  });
+}
+
+async function saveText(
+  contents: string,
+  suggestedName: string,
+  filters: FileFilter[],
+): Promise<boolean> {
+  const win = targetWindow();
+  const options = { defaultPath: suggestedName, filters };
+  const result = win
+    ? await dialog.showSaveDialog(win, options)
+    : await dialog.showSaveDialog(options);
+  if (result.canceled || !result.filePath) return false;
+  fs.writeFileSync(result.filePath, contents ?? "", "utf8");
+  return true;
 }

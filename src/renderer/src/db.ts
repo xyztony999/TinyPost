@@ -1,28 +1,20 @@
 import type {
   AppSettings,
-  AuthConfig,
   CollectionRow,
   EnvironmentRow,
-  HeaderItem,
+  FileFilter,
   HistoryRow,
-  HttpResponsePayload,
   SavedRequestRow,
-  VariableItem,
+  SaveHistoryInput,
+  SaveRequestInput,
+  UpsertEnvironmentInput,
 } from "@shared/types";
 
 function api() {
   return window.tinypost;
 }
 
-export async function saveHistory(input: {
-  method: string;
-  url: string;
-  headers: HeaderItem[];
-  body: string;
-  auth: AuthConfig;
-  query: string;
-  response: HttpResponsePayload;
-}): Promise<void> {
+export async function saveHistory(input: SaveHistoryInput): Promise<void> {
   await api().saveHistory(input);
 }
 
@@ -46,12 +38,7 @@ export async function setActiveEnvironment(id: number): Promise<void> {
   await api().setActiveEnvironment(id);
 }
 
-export async function upsertEnvironment(input: {
-  id?: number;
-  name: string;
-  variables: VariableItem[];
-  makeActive?: boolean;
-}): Promise<number> {
+export async function upsertEnvironment(input: UpsertEnvironmentInput): Promise<number> {
   return api().upsertEnvironment(input);
 }
 
@@ -81,17 +68,7 @@ export async function listSavedRequests(
   return api().listSavedRequests(collectionId);
 }
 
-export async function saveRequest(input: {
-  id?: number;
-  collectionId: number;
-  name: string;
-  method: string;
-  url: string;
-  headers: HeaderItem[];
-  body: string;
-  auth: AuthConfig;
-  query?: string;
-}): Promise<number> {
+export async function saveRequest(input: SaveRequestInput): Promise<number> {
   return api().saveRequest(input);
 }
 
@@ -120,4 +97,20 @@ export async function saveResponseBody(
 
 export async function httpCancel(requestId?: string): Promise<boolean> {
   return api().httpCancel(requestId);
+}
+
+export async function pickFile(filters?: FileFilter[]): Promise<string | null> {
+  return api().pickFile(filters);
+}
+
+export async function saveTextFile(contents: string, suggestedName: string): Promise<boolean> {
+  return api().saveTextFile(contents, suggestedName);
+}
+
+export async function backupDatabase(): Promise<boolean> {
+  return api().backupDatabase();
+}
+
+export async function restoreDatabase(): Promise<boolean> {
+  return api().restoreDatabase();
 }
