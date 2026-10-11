@@ -31,6 +31,7 @@ export interface TinyPostApi {
   saveRequest: (input: SaveRequestInput) => Promise<number>;
   renameSavedRequest: (id: number, name: string) => Promise<void>;
   deleteSavedRequest: (id: number) => Promise<void>;
+  reorderSavedRequests: (collectionId: number, orderedIds: number[]) => Promise<void>;
   getSettings: () => Promise<AppSettings>;
   saveSettings: (settings: AppSettings) => Promise<void>;
   saveResponseBody: (body: string, suggestedName: string) => Promise<boolean>;

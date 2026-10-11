@@ -38,6 +38,8 @@ const api = {
   renameSavedRequest: (id: number, name: string) =>
     ipcRenderer.invoke("db:renameSavedRequest", id, name),
   deleteSavedRequest: (id: number) => ipcRenderer.invoke("db:deleteSavedRequest", id),
+  reorderSavedRequests: (collectionId: number, orderedIds: number[]) =>
+    ipcRenderer.invoke("db:reorderSavedRequests", collectionId, orderedIds),
 
   getSettings: () => ipcRenderer.invoke("db:getSettings"),
   saveSettings: (settings: AppSettings) => ipcRenderer.invoke("db:saveSettings", settings),

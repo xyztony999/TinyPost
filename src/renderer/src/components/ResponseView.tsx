@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ExtractionHit } from "@shared/jsonpath";
 import { formatBytes, presentBody, statusTone } from "../lib/format";
+import { runSummary, type RunReport } from "../lib/collectionRun";
 import { mediaType } from "@shared/contentType";
 import type { HttpResponsePayload } from "@shared/types";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
@@ -19,6 +20,9 @@ interface ResponseViewProps {
   onCopyCurl: () => void;
   onSaveFile: () => void;
   onExtract: (path: string, variable: string) => void;
+  runReport: RunReport | null;
+  onOpenRunStep: (savedId: number) => void;
+  onDismissRun: () => void;
 }
 
 export function ResponseView(props: ResponseViewProps) {
@@ -114,7 +118,7 @@ export function ResponseView(props: ResponseViewProps) {
         </div>
       )}
 
-      {props.sending && (
+      {props.sending && !props.runReport && (
         <div className="response-loading" aria-live="polite" aria-busy="true">
           <span className="spinner" aria-hidden="true" />
           <div>
@@ -124,11 +128,55 @@ export function ResponseView(props: ResponseViewProps) {
         </div>
       )}
 
-      {!props.error && !props.response && !props.sending && (
+      {props.runReport && (
+        <div className="run-report">
+          <div className="run-report-head">
+            <strong>{runSummary(props.runReport)}</strong>
+            {!props.runReport.running && (
+              <button type="button" className="ghost" onClick={props.onDismissRun}>
+                关闭
+              </button>
+            )}
+          </div>
+          {props.runReport.steps.length === 0 && props.runReport.running && (
+            <p className="empty">准备发送第一条请求…</p>
+          )}
+          <div className="run-list">
+            {props.runReport.steps.map((step, index) => (
+              <button
+                key={`${step.savedId}-${index}`}
+                type="button"
+                className={step.stopped ? "run-step stopped" : "run-step"}
+                onClick={() => props.onOpenRunStep(step.savedId)}
+              >
+                <span className="method">{step.method}</span>
+                <span className="history-url">{step.name}</span>
+                <span className="history-meta">
+                  {step.error ? (
+                    step.error
+                  ) : (
+                    <>
+                      <span className={`status-badge compact tone-${statusTone(step.status)}`}>
+                        {step.status ?? "-"}
+                      </span>
+                      {step.durationMs ?? "-"} ms
+                      {step.binary
+                        ? ` · ${mediaType(step.contentType) || "application/octet-stream"} · ${formatBytes(step.sizeBytes ?? 0)}`
+                        : ""}
+                    </>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!props.error && !props.response && !props.sending && !props.runReport && (
         <p className="empty">响应显示在这里。可用 {"{{baseUrl}}"} / {"{{token}}"}，数据仅存本机。</p>
       )}
 
-      {props.response && !props.sending && (
+      {props.response && !props.sending && !props.runReport && (
         <>
           <div className="tabs">
             <button

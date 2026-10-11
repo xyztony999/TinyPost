@@ -5,10 +5,12 @@ export interface RequestMeta {
   formFields: FormField[];
   urlencodedFields: UrlEncodedField[];
   extractors: ExtractRule[];
+  /** 为 false 时留在集合里，但集合运行会跳过。缺省视为参与。 */
+  runEnabled: boolean;
 }
 
 export function defaultRequestMeta(): RequestMeta {
-  return { bodyMode: "raw", formFields: [], urlencodedFields: [], extractors: [] };
+  return { bodyMode: "raw", formFields: [], urlencodedFields: [], extractors: [], runEnabled: true };
 }
 
 function asFormField(value: unknown): FormField | null {
@@ -69,6 +71,7 @@ export function parseRequestMeta(raw: string | null | undefined): RequestMeta {
       formFields,
       urlencodedFields,
       extractors,
+      runEnabled: row.runEnabled === false ? false : true,
     };
   } catch {
     return defaultRequestMeta();
@@ -100,5 +103,6 @@ export function serializeRequestMeta(meta: RequestMeta): string {
     formFields: compactFormFields(meta.formFields),
     urlencodedFields: compactUrlEncodedFields(meta.urlencodedFields),
     extractors: compactExtractors(meta.extractors),
+    runEnabled: meta.runEnabled !== false,
   });
 }

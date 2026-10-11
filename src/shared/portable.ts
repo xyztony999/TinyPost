@@ -28,6 +28,7 @@ export interface PortableRequest {
   formFields: FormField[];
   urlencodedFields: UrlEncodedField[];
   extractors: ExtractRule[];
+  runEnabled: boolean;
 }
 
 export interface PortableCollection {
@@ -196,6 +197,7 @@ function readRequest(value: unknown, index: number): PortableRequest {
     formFields: readFormFields(row.formFields, named),
     urlencodedFields: readUrlEncodedFields(row.urlencodedFields, named),
     extractors: readExtractors(row.extractors, named),
+    runEnabled: row.runEnabled === false ? false : true,
   };
 }
 

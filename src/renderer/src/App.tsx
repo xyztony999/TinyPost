@@ -20,6 +20,7 @@ import {
   pickFile,
   renameCollection,
   renameSavedRequest,
+  reorderSavedRequests,
   restoreDatabase,
   saveHistory,
   saveRequest,
@@ -33,10 +34,8 @@ import {
 import { applyAuth, parseAuthJson } from "./lib/auth";
 import { binaryHistoryNote, extensionForContentType } from "@shared/contentType";
 import {
-  cookieHeaderValue,
   emptyCookieJar,
   emptyStoredCookie,
-  mergeSetCookies,
   parseCookieJar,
   type CookieJar,
   type StoredCookie,
@@ -51,11 +50,14 @@ import {
   serializeQuery,
   withTrailingEmpty,
 } from "./lib/query";
+import { advanceEnvironment, runSummary, type RunReport, type RunStep } from "./lib/collectionRun";
+import { prepareHttpRequest } from "./lib/prepareRequest";
 import { parseVariablesJson, substituteVars, variablesToMap } from "./lib/vars";
 import { buildCurl, parseCurl } from "@shared/curl";
 import { extractByRules, type ExtractionHit } from "@shared/jsonpath";
 import type { PortableRequest } from "@shared/portable";
 import { PORTABLE_VERSION } from "@shared/portable";
+import { compareSavedRequestOrder } from "@shared/requestOrder";
 import {
   compactExtractors,
   compactFormFields,
@@ -63,7 +65,6 @@ import {
   parseRequestMeta,
   serializeRequestMeta,
 } from "@shared/requestMeta";
-import { encodeUrlEncoded } from "@shared/urlencoded";
 import { looksLikeXml } from "@shared/xml";
 import type {
   AuthConfig,
@@ -76,7 +77,6 @@ import type {
   HistoryRow,
   HttpMethod,
   HttpResponsePayload,
-  MultipartPartPayload,
   QueryItem,
   SavedRequestRow,
   TlsConfig,
@@ -98,6 +98,7 @@ import {
 import "./App.css";
 
 const COMPOSER_REQUEST_ID = "composer";
+const RUN_REQUEST_ID = "collection-run";
 
 function parseHeadersJson(raw: string): HeaderItem[] {
   try {
@@ -210,6 +211,7 @@ function App() {
   const [formFields, setFormFields] = useState<FormField[]>([emptyFormField()]);
   const [urlencodedFields, setUrlEncodedFields] = useState<UrlEncodedField[]>([emptyUrlEncodedField()]);
   const [extractors, setExtractors] = useState<ExtractRule[]>([emptyExtractRule()]);
+  const [runEnabled, setRunEnabled] = useState(true);
   const [auth, setAuth] = useState<AuthConfig>(defaultAuth());
   const [insecure, setInsecure] = useState(DEFAULT_SETTINGS.insecure);
   const [timeoutMs, setTimeoutMs] = useState(DEFAULT_SETTINGS.timeoutMs);
@@ -226,6 +228,8 @@ function App() {
   const [sidebarTab, setSidebarTab] = useState<"collections" | "history">("collections");
   const [sidebarSearch, setSidebarSearch] = useState("");
   const [extractNotice, setExtractNotice] = useState<ExtractionHit[]>([]);
+  const [runReport, setRunReport] = useState<RunReport | null>(null);
+  const runAbortRef = useRef(false);
 
   const [environments, setEnvironments] = useState<EnvironmentRow[]>([]);
   const [collections, setCollections] = useState<CollectionRow[]>([]);
@@ -457,6 +461,7 @@ function App() {
       meta.urlencodedFields.length ? persistUrlEncoded(meta.urlencodedFields) : [emptyUrlEncodedField()],
     );
     setExtractors(meta.extractors.length ? persistExtractors(meta.extractors) : [emptyExtractRule()]);
+    setRunEnabled(meta.runEnabled);
     setAuth(input.auth || defaultAuth());
     setResponse(input.response ?? null);
     setError(null);
@@ -514,6 +519,7 @@ function App() {
         formFields: compactFormFields(formFields),
         urlencodedFields: compactUrlEncodedFields(urlencodedFields),
         extractors: compactExtractors(extractors),
+        runEnabled,
       }),
     };
   }
@@ -609,78 +615,41 @@ function App() {
 
   async function sendRequest() {
     if (!canSend) return;
-    if (bodyMode === "form-data" && method !== "GET" && method !== "HEAD") {
-      for (const field of formFields) {
-        if (!isRowEnabled(field) || !field.key.trim()) continue;
-        if (field.type === "file" && !field.value.trim()) {
-          setError(`请为「${field.key}」选择文件`);
-          return;
-        }
-      }
+    const jar = activeEnv ? parseCookieJar(activeEnv.cookies) : emptyCookieJar();
+    const prepared = prepareHttpRequest({
+      method,
+      url,
+      headers,
+      body,
+      auth,
+      meta: {
+        bodyMode,
+        formFields,
+        urlencodedFields,
+        extractors,
+        runEnabled,
+      },
+      variables: activeVars,
+      jar,
+      tls: activeTlsPayload(),
+      insecure,
+      timeoutMs,
+      followRedirects,
+      requestId: COMPOSER_REQUEST_ID,
+    });
+    if (prepared.error || !prepared.payload) {
+      setError(prepared.error || "无法发送");
+      return;
     }
 
     setSending(true);
     setError(null);
     setResponse(null);
     setExtractNotice([]);
-
-    const cleanedHeaders = headers.filter((header) => header.key.trim() && isRowEnabled(header));
-    const resolvedUrl = substituteVars(url.trim(), activeVars);
-    const resolvedHeaders = cleanedHeaders.map((header) => ({
-      key: substituteVars(header.key, activeVars),
-      value: substituteVars(header.value, activeVars),
-      enabled: true,
-    }));
-    const resolvedBody = substituteVars(body, activeVars);
-    const finalHeaders = applyAuth(resolvedHeaders, auth, activeVars);
-    const jar = activeEnv ? parseCookieJar(activeEnv.cookies) : emptyCookieJar();
-    if (jar.enabled && !finalHeaders.some((header) => header.key.toLowerCase() === "cookie")) {
-      const cookie = cookieHeaderValue(jar, resolvedUrl);
-      if (cookie) finalHeaders.push({ key: "Cookie", value: cookie, enabled: true });
-    }
-    const sendMultipart = bodyMode === "form-data" && method !== "GET" && method !== "HEAD";
-    const sendUrlEncoded = bodyMode === "urlencoded" && method !== "GET" && method !== "HEAD";
-    const encodedBody = sendUrlEncoded
-      ? encodeUrlEncoded(
-          urlencodedFields
-            .filter((field) => isRowEnabled(field) && (field.key.trim() || field.value.trim()))
-            .map((field) => ({
-              key: substituteVars(field.key, activeVars),
-              value: substituteVars(field.value, activeVars),
-            })),
-        )
-      : undefined;
-    const multipart: MultipartPartPayload[] | undefined = sendMultipart
-      ? formFields
-          .filter((field) => isRowEnabled(field) && field.key.trim())
-          .map((field) => ({
-            name: substituteVars(field.key, activeVars),
-            text: field.type === "text" ? substituteVars(field.value, activeVars) : undefined,
-            filePath: field.type === "file" ? substituteVars(field.value, activeVars) : undefined,
-            fileName: field.fileName ? substituteVars(field.fileName, activeVars) : undefined,
-            contentType: field.contentType ? substituteVars(field.contentType, activeVars) : undefined,
-          }))
-      : undefined;
+    setRunReport(null);
 
     try {
-      const result = await window.tinypost.httpSend({
-        method,
-        url: resolvedUrl,
-        headers: finalHeaders,
-        body:
-          method === "GET" || method === "HEAD" || sendMultipart
-            ? undefined
-            : sendUrlEncoded
-              ? encodedBody
-              : resolvedBody,
-        multipart: multipart && multipart.length > 0 ? multipart : undefined,
-        urlencoded: sendUrlEncoded,
-        tls: activeTlsPayload(),
-        insecure,
-        timeoutMs,
-        followRedirects,
-        requestId: COMPOSER_REQUEST_ID,
-      });
+      const result = await window.tinypost.httpSend(prepared.payload);
 
       setResponse(result);
       setResponseTab("body");
@@ -695,30 +664,41 @@ function App() {
         : result;
       await saveHistory({ ...payload, response: historyResponse });
       setHistory(await listHistory());
-      if (jar.enabled && result.setCookies?.length && activeEnv) {
-        const nextJar = mergeSetCookies(jar, result.setCookies);
-        await upsertEnvironment({
-          id: activeEnv.id,
-          name: activeEnv.name,
+      if (activeEnv) {
+        const advanced = advanceEnvironment({
           variables: parseVariablesJson(activeEnv.variables),
-          tls: parseTls(activeEnv.tls),
-          cookies: nextJar,
+          jar,
+          status: result.status,
+          body: result.body,
+          binary: Boolean(result.binary),
+          setCookies: result.setCookies,
+          extractors,
         });
-        const envs = await ensureDefaultEnvironment();
-        setEnvironments(envs);
-        if (showEnvEditor && editingEnvId === activeEnv.id) {
-          setEnvCookies({
-            ...nextJar,
-            items: persistCookieRows(nextJar.items),
+        const cookiesChanged = jar.enabled && Boolean(result.setCookies?.length);
+        const extracted = advanced.hits.some((hit) => hit.ok && hit.value !== undefined);
+        if (cookiesChanged || extracted) {
+          await upsertEnvironment({
+            id: activeEnv.id,
+            name: activeEnv.name,
+            variables: advanced.variables,
+            tls: parseTls(activeEnv.tls),
+            cookies: advanced.jar,
           });
+          const envs = await ensureDefaultEnvironment();
+          setEnvironments(envs);
+          if (showEnvEditor && editingEnvId === activeEnv.id) {
+            const fresh = envs.find((env) => env.id === activeEnv.id);
+            const vars = parseVariablesJson(fresh?.variables || "[]");
+            setEnvVars(vars.length ? [...vars, emptyVariable()] : [emptyVariable()]);
+            setEnvCookies(editorJar(advanced.jar));
+          }
         }
-      }
-      if (result.status >= 200 && result.status < 300 && !result.binary) {
-        const rules = compactExtractors(extractors);
-        if (rules.length > 0) {
-          const hits = extractByRules(result.body, rules);
-          await applyHits(hits);
+        if (!result.binary && compactExtractors(extractors).length > 0 && result.status >= 200 && result.status < 300) {
+          setExtractNotice(advanced.hits);
         }
+      } else if (!result.binary && compactExtractors(extractors).length > 0 && result.status >= 200 && result.status < 300) {
+        const hits = extractByRules(result.body, compactExtractors(extractors));
+        setExtractNotice(hits.map((hit) => (hit.ok ? { ...hit, ok: false, error: "没有活动环境" } : hit)));
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -730,7 +710,267 @@ function App() {
   }
 
   async function cancelRequest() {
+    runAbortRef.current = true;
     await httpCancel(COMPOSER_REQUEST_ID);
+    await httpCancel(RUN_REQUEST_ID);
+  }
+
+  function rememberEnvironment(variables: VariableItem[], jar: CookieJar, envId: number) {
+    if (showEnvEditor && editingEnvId === envId) {
+      setEnvVars(variables.length ? [...variables, emptyVariable()] : [emptyVariable()]);
+      setEnvCookies(editorJar(jar));
+    }
+  }
+
+  async function runCollection(collection: CollectionRow) {
+    if (sending) return;
+    if (!activeEnv) {
+      showToast("没有活动环境");
+      return;
+    }
+    const ordered = savedRequests
+      .filter((item) => item.collection_id === collection.id)
+      .sort(compareSavedRequestOrder);
+    if (ordered.length === 0) {
+      showToast("集合里没有请求");
+      return;
+    }
+    const requests = ordered.filter((item) => parseRequestMeta(item.meta).runEnabled);
+    if (requests.length === 0) {
+      showToast("没有参与运行的请求");
+      return;
+    }
+
+    const env = activeEnv;
+    runAbortRef.current = false;
+    setSending(true);
+    setError(null);
+    setResponse(null);
+    setExtractNotice([]);
+    setExpandedCollections((prev) => (prev.includes(collection.id) ? prev : [...prev, collection.id]));
+    const steps: RunStep[] = [];
+    const publish = (running: boolean, cancelled: boolean) => {
+      setRunReport({
+        collectionId: collection.id,
+        collectionName: collection.name,
+        running,
+        cancelled,
+        steps: [...steps],
+      });
+    };
+    publish(true, false);
+
+    let variables = parseVariablesJson(env.variables);
+    let jar = parseCookieJar(env.cookies);
+    const tls = parseTls(env.tls);
+    let cancelled = false;
+
+    try {
+      for (const item of requests) {
+        if (runAbortRef.current) {
+          cancelled = true;
+          break;
+        }
+        const meta = parseRequestMeta(item.meta);
+        const prepared = prepareHttpRequest({
+          method: item.method,
+          url: item.url,
+          headers: parseHeadersJson(item.headers),
+          body: item.body || "",
+          auth: parseAuthJson(item.auth),
+          meta,
+          variables: variablesToMap(variables),
+          jar,
+          tls:
+            tls.certPath || tls.keyPath || tls.caPath || tlsPassphrases[env.id]
+              ? { ...tls, passphrase: tlsPassphrases[env.id] || undefined }
+              : undefined,
+          insecure,
+          timeoutMs,
+          followRedirects,
+          requestId: RUN_REQUEST_ID,
+        });
+        if (prepared.error || !prepared.payload) {
+          steps.push({
+            savedId: item.id,
+            name: item.name,
+            method: item.method,
+            status: null,
+            durationMs: null,
+            error: prepared.error || "无法发送",
+            stopped: true,
+            binary: false,
+          });
+          publish(true, false);
+          break;
+        }
+        try {
+          const result = await window.tinypost.httpSend(prepared.payload);
+          const historyResponse = result.binary
+            ? {
+                ...result,
+                body: binaryHistoryNote(result.contentType, result.sizeBytes ?? 0),
+                binary: false,
+                setCookies: undefined,
+              }
+            : result;
+          await saveHistory({
+            method: item.method,
+            url: item.url,
+            headers: parseHeadersJson(item.headers),
+            body: item.body || "",
+            auth: parseAuthJson(item.auth),
+            query: item.query,
+            meta: item.meta,
+            response: historyResponse,
+          });
+          const advanced = advanceEnvironment({
+            variables,
+            jar,
+            status: result.status,
+            body: result.body,
+            binary: Boolean(result.binary),
+            setCookies: result.setCookies,
+            extractors: meta.extractors,
+          });
+          variables = advanced.variables;
+          jar = advanced.jar;
+          if ((jar.enabled && result.setCookies?.length) || advanced.hits.some((hit) => hit.ok)) {
+            await upsertEnvironment({
+              id: env.id,
+              name: env.name,
+              variables,
+              tls,
+              cookies: jar,
+            });
+            rememberEnvironment(variables, jar, env.id);
+          }
+          steps.push({
+            savedId: item.id,
+            name: item.name,
+            method: item.method,
+            status: result.status,
+            durationMs: result.durationMs,
+            error: null,
+            stopped: !advanced.proceed,
+            binary: Boolean(result.binary),
+            contentType: result.contentType,
+            sizeBytes: result.sizeBytes,
+          });
+          publish(true, false);
+          if (!advanced.proceed) break;
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e);
+          if (message === "已取消" || runAbortRef.current) {
+            cancelled = true;
+            steps.push({
+              savedId: item.id,
+              name: item.name,
+              method: item.method,
+              status: null,
+              durationMs: null,
+              error: "已取消",
+              stopped: true,
+              binary: false,
+            });
+            break;
+          }
+          steps.push({
+            savedId: item.id,
+            name: item.name,
+            method: item.method,
+            status: null,
+            durationMs: null,
+            error: message,
+            stopped: true,
+            binary: false,
+          });
+          publish(true, false);
+          break;
+        }
+      }
+    } finally {
+      const report: RunReport = {
+        collectionId: collection.id,
+        collectionName: collection.name,
+        running: false,
+        cancelled,
+        steps: [...steps],
+      };
+      setRunReport(report);
+      setSending(false);
+      setHistory(await listHistory());
+      setEnvironments(await ensureDefaultEnvironment());
+      showToast(runSummary(report));
+    }
+  }
+
+  async function onDuplicateSaved(item: SavedRequestRow) {
+    if (item.collection_id == null) {
+      showToast("请先把请求放进集合");
+      return;
+    }
+    await saveRequest({
+      collectionId: item.collection_id,
+      name: `${item.name} 副本`,
+      method: item.method,
+      url: item.url,
+      headers: parseHeadersJson(item.headers),
+      body: item.body || "",
+      auth: parseAuthJson(item.auth),
+      query: item.query,
+      meta: item.meta,
+      insertAfterId: item.id,
+    });
+    setSavedRequests(await listSavedRequests());
+    showToast("已复制请求");
+  }
+
+  async function onToggleRun(item: SavedRequestRow, enabled: boolean) {
+    if (item.collection_id == null) {
+      showToast("请先把请求放进集合");
+      return;
+    }
+    const meta = parseRequestMeta(item.meta);
+    const nextMeta = serializeRequestMeta({ ...meta, runEnabled: enabled });
+    setSavedRequests((current) => current.map((row) => (row.id === item.id ? { ...row, meta: nextMeta } : row)));
+    if (currentSavedId === item.id) setRunEnabled(enabled);
+    try {
+      await saveRequest({
+        id: item.id,
+        collectionId: item.collection_id,
+        name: item.name,
+        method: item.method,
+        url: item.url,
+        headers: parseHeadersJson(item.headers),
+        body: item.body || "",
+        auth: parseAuthJson(item.auth),
+        query: item.query,
+        meta: nextMeta,
+      });
+    } catch (e) {
+      setSavedRequests(await listSavedRequests());
+      if (currentSavedId === item.id) setRunEnabled(parseRequestMeta(item.meta).runEnabled);
+      showToast(e instanceof Error ? e.message : "参与运行保存失败");
+    }
+  }
+
+  async function onReorderSaved(collectionId: number, orderedIds: number[]) {
+    const rank = new Map(orderedIds.map((id, index) => [id, index]));
+    setSavedRequests((current) =>
+      current.map((item) => {
+        if (item.collection_id !== collectionId) return item;
+        const sortOrder = rank.get(item.id);
+        if (sortOrder == null) return item;
+        return { ...item, sort_order: sortOrder };
+      }),
+    );
+    try {
+      await reorderSavedRequests(collectionId, orderedIds);
+    } catch (e) {
+      setSavedRequests(await listSavedRequests());
+      showToast(e instanceof Error ? e.message : "排序保存失败");
+    }
   }
 
   async function onClearHistory() {
@@ -936,6 +1176,7 @@ function App() {
           formFields: req.formFields || [],
           urlencodedFields: req.urlencodedFields || [],
           extractors: req.extractors || [],
+          runEnabled: req.runEnabled !== false,
         }),
       });
     }
@@ -990,10 +1231,11 @@ function App() {
               body: req.body,
               auth: req.auth,
               query: [],
-              bodyMode: "raw" as const,
-              formFields: [],
-              urlencodedFields: [],
+              bodyMode: req.bodyMode,
+              formFields: req.formFields,
+              urlencodedFields: req.urlencodedFields,
               extractors: [],
+              runEnabled: true,
             }));
       const collectionId = await importRequestList(collectionName, requests);
       if (imported.type === "postman-collection" && imported.data.variables.length > 0) {
@@ -1011,6 +1253,7 @@ function App() {
   async function onExportCollection(collection: CollectionRow) {
     const requests = savedRequests
       .filter((item) => item.collection_id === collection.id)
+      .sort(compareSavedRequestOrder)
       .map((item) => {
         const meta = parseRequestMeta(item.meta);
         const stored = parseQueryJson(item.query);
@@ -1029,6 +1272,7 @@ function App() {
           formFields: meta.formFields,
           urlencodedFields: meta.urlencodedFields,
           extractors: meta.extractors,
+          runEnabled: meta.runEnabled,
         };
       });
     const saved = await saveTextFile(
@@ -1122,6 +1366,7 @@ function App() {
           formFields: parsed.formFields,
           urlencodedFields: parsed.urlencodedFields,
           extractors: compactExtractors(extractors),
+          runEnabled,
         }),
         saved:
           currentSavedId != null
@@ -1296,7 +1541,12 @@ function App() {
           onDeleteCollection={(id) => void onDeleteCollection(id)}
           onLoadSaved={loadSavedRequest}
           onRenameSaved={(item) => void onRenameSavedRequest(item)}
+          onDuplicateSaved={(item) => void onDuplicateSaved(item)}
+          onToggleRun={(item, enabled) => void onToggleRun(item, enabled)}
           onDeleteSaved={(id) => void onDeleteSavedRequest(id)}
+          onReorderSaved={(collectionId, orderedIds) => void onReorderSaved(collectionId, orderedIds)}
+          onRunCollection={(collection) => void runCollection(collection)}
+          runningCollectionId={runReport?.running ? runReport.collectionId : null}
           onClearHistory={() => void onClearHistory()}
           onLoadHistory={loadHistoryItem}
         />
@@ -1316,6 +1566,7 @@ function App() {
             formFields={formFields}
             urlencodedFields={urlencodedFields}
             extractors={extractors}
+            runEnabled={runEnabled}
             bodyDisabled={method === "GET" || method === "HEAD"}
             onMethod={setMethod}
             onUrl={setComposerUrl}
@@ -1340,6 +1591,18 @@ function App() {
             onRemoveUrlEncoded={removeUrlEncodedField}
             onUpdateExtractor={updateExtractor}
             onRemoveExtractor={removeExtractor}
+            onRunEnabled={(enabled) => {
+              if (currentSavedId == null) {
+                setRunEnabled(enabled);
+                return;
+              }
+              const item = savedRequests.find((row) => row.id === currentSavedId);
+              if (!item) {
+                setRunEnabled(enabled);
+                return;
+              }
+              void onToggleRun(item, enabled);
+            }}
           />
           <ResponseView
             sending={sending}
@@ -1355,6 +1618,12 @@ function App() {
             onCopyCurl={() => void copyText(resolvedCurl(), "已复制 cURL")}
             onSaveFile={() => void onSaveResponseFile()}
             onExtract={(path, variable) => void onManualExtract(path, variable)}
+            runReport={runReport}
+            onOpenRunStep={(savedId) => {
+              const item = savedRequests.find((row) => row.id === savedId);
+              if (item) loadSavedRequest(item);
+            }}
+            onDismissRun={() => setRunReport(null)}
           />
         </main>
       </div>

@@ -27,6 +27,24 @@ describe("parsePortable", () => {
     expect(doc.requests[0]?.bodyMode).toBe("form-data");
     expect(doc.requests[0]?.auth.type).toBe("none");
     expect(doc.requests[0]?.formFields[0]?.value).toBe("D:/a.txt");
+    expect(doc.requests[0]?.runEnabled).toBe(true);
+  });
+
+  it("旧文件没有参与运行字段时视为参与，显式关闭则保留", () => {
+    const doc = parsePortable(
+      JSON.stringify({
+        version: 1,
+        kind: "tinypost.collection",
+        name: "演示",
+        requests: [
+          { name: "开", method: "GET", url: "http://a" },
+          { name: "关", method: "GET", url: "http://b", runEnabled: false },
+        ],
+      }),
+    );
+    expect(doc.kind).toBe("tinypost.collection");
+    if (doc.kind !== "tinypost.collection") return;
+    expect(doc.requests.map((item) => item.runEnabled)).toEqual([true, false]);
   });
 
   it("校验环境", () => {

@@ -31,6 +31,7 @@ interface RequestEditorProps {
   formFields: FormField[];
   urlencodedFields: UrlEncodedField[];
   extractors: ExtractRule[];
+  runEnabled: boolean;
   bodyDisabled: boolean;
   onMethod: (method: HttpMethod) => void;
   onUrl: (url: string) => void;
@@ -55,6 +56,7 @@ interface RequestEditorProps {
   onRemoveUrlEncoded: (index: number) => void;
   onUpdateExtractor: (index: number, patch: Partial<ExtractRule>) => void;
   onRemoveExtractor: (index: number) => void;
+  onRunEnabled: (enabled: boolean) => void;
 }
 
 export function RequestEditor(props: RequestEditorProps) {
@@ -126,6 +128,14 @@ export function RequestEditor(props: RequestEditorProps) {
           ))}
         </div>
         <div className="composer-extra">
+          <label className="run-toggle" title="关闭后仍留在集合中，集合运行时跳过">
+            <input
+              type="checkbox"
+              checked={props.runEnabled}
+              onChange={(e) => props.onRunEnabled(e.target.checked)}
+            />
+            参与运行
+          </label>
           <button type="button" className="ghost" onClick={props.onOpenCurlImport}>
             导入 cURL
           </button>

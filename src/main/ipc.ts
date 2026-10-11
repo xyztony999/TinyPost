@@ -59,6 +59,9 @@ export function registerIpc(): void {
   ipcMain.handle("db:deleteSavedRequest", (_e, id: number) => {
     db.deleteSavedRequest(id);
   });
+  ipcMain.handle("db:reorderSavedRequests", (_e, collectionId: number, orderedIds: number[]) => {
+    db.reorderSavedRequests(collectionId, orderedIds);
+  });
 
   ipcMain.handle("db:getSettings", () => db.getSettings());
   ipcMain.handle("db:saveSettings", (_e, settings: AppSettings) => {

@@ -13,6 +13,7 @@ import type {
   UpsertEnvironmentInput,
   VariableItem,
 } from "../shared/types";
+import { backfillSortOrder, insertIdAfter } from "../shared/requestOrder";
 import { DEFAULT_SETTINGS, defaultAuth } from "../shared/types";
 
 const require = createRequire(import.meta.url);
@@ -107,6 +108,8 @@ CREATE TABLE IF NOT EXISTS settings (
   ensureColumn("saved_requests", "auth", `TEXT NOT NULL DEFAULT '{"type":"none"}'`);
   ensureColumn("saved_requests", "query", `TEXT NOT NULL DEFAULT '[]'`);
   ensureColumn("saved_requests", "meta", `TEXT NOT NULL DEFAULT '{}'`);
+  const addedSortOrder = ensureColumn("saved_requests", "sort_order", "INTEGER NOT NULL DEFAULT 0");
+  if (addedSortOrder) backfillSavedRequestOrder();
   ensureColumn("request_history", "auth", `TEXT NOT NULL DEFAULT '{"type":"none"}'`);
   ensureColumn("request_history", "query", `TEXT NOT NULL DEFAULT '[]'`);
   ensureColumn("request_history", "meta", `TEXT NOT NULL DEFAULT '{}'`);
@@ -119,10 +122,60 @@ function tableColumns(table: string): string[] {
   return cols[0]?.values.map((row) => String(row[1])) || [];
 }
 
-function ensureColumn(table: string, name: string, definition: string): void {
-  if (!tableColumns(table).includes(name)) {
-    getDb().run(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+function ensureColumn(table: string, name: string, definition: string): boolean {
+  if (tableColumns(table).includes(name)) return false;
+  getDb().run(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`);
+  return true;
+}
+
+function withTransaction(work: () => void): void {
+  const database = getDb();
+  database.run("BEGIN");
+  try {
+    work();
+    database.run("COMMIT");
+  } catch (error) {
+    database.run("ROLLBACK");
+    throw error;
   }
+  persist();
+}
+
+function backfillSavedRequestOrder(): void {
+  const rows = queryAll<{ id: number; collection_id: number | null }>(
+    "SELECT id, collection_id FROM saved_requests",
+  );
+  const assigned = backfillSortOrder(
+    rows.map((row) => ({
+      id: Number(row.id),
+      collectionId: row.collection_id == null ? null : Number(row.collection_id),
+    })),
+  );
+  if (assigned.length === 0) return;
+  withTransaction(() => {
+    for (const row of assigned) {
+      getDb().run("UPDATE saved_requests SET sort_order = ? WHERE id = ?", [row.sortOrder, row.id]);
+    }
+  });
+}
+
+function nextSortOrder(collectionId: number): number {
+  const rows = queryAll<{ max_order: number | null }>(
+    "SELECT MAX(sort_order) AS max_order FROM saved_requests WHERE collection_id = ?",
+    [collectionId],
+  );
+  const max = rows[0]?.max_order;
+  return max == null ? 0 : Number(max) + 1;
+}
+
+function writeSortOrder(collectionId: number, orderedIds: number[]): void {
+  orderedIds.forEach((id, index) => {
+    getDb().run("UPDATE saved_requests SET sort_order = ? WHERE id = ? AND collection_id = ?", [
+      index,
+      id,
+      collectionId,
+    ]);
+  });
 }
 
 function queryAll<T>(sql: string, params: unknown[] = []): T[] {
@@ -276,17 +329,17 @@ export function deleteCollection(id: number): void {
 export function listSavedRequests(collectionId?: number): SavedRequestRow[] {
   if (collectionId != null) {
     return queryAll<SavedRequestRow>(
-      `SELECT id, collection_id, name, method, url, headers, body, auth, query, meta, created_at
+      `SELECT id, collection_id, name, method, url, headers, body, auth, query, meta, sort_order, created_at
        FROM saved_requests
        WHERE collection_id = ?
-       ORDER BY id ASC`,
+       ORDER BY sort_order ASC, id ASC`,
       [collectionId],
     );
   }
   return queryAll<SavedRequestRow>(
-    `SELECT id, collection_id, name, method, url, headers, body, auth, query, meta, created_at
+    `SELECT id, collection_id, name, method, url, headers, body, auth, query, meta, sort_order, created_at
      FROM saved_requests
-     ORDER BY id DESC`,
+     ORDER BY sort_order ASC, id ASC`,
   );
 }
 
@@ -316,22 +369,52 @@ export function saveRequest(input: SaveRequestInput): number {
     );
     return input.id;
   }
-  return run(
-    `INSERT INTO saved_requests
-      (collection_id, name, method, url, headers, body, auth, query, meta)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.collectionId,
-      input.name,
-      input.method,
-      input.url,
-      headers,
-      input.body,
-      auth,
-      query,
-      meta,
-    ],
-  );
+  const sortOrder = nextSortOrder(input.collectionId);
+  let id = 0;
+  withTransaction(() => {
+    getDb().run(
+      `INSERT INTO saved_requests
+        (collection_id, name, method, url, headers, body, auth, query, meta, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.collectionId,
+        input.name,
+        input.method,
+        input.url,
+        headers,
+        input.body,
+        auth,
+        query,
+        meta,
+        sortOrder,
+      ],
+    );
+    id = Number(getDb().exec("SELECT last_insert_rowid() as id")[0]?.values[0]?.[0] || 0);
+    if (input.insertAfterId != null) {
+      const siblings = queryAll<{ id: number }>(
+        `SELECT id FROM saved_requests
+         WHERE collection_id = ? AND id != ?
+         ORDER BY sort_order ASC, id ASC`,
+        [input.collectionId, id],
+      );
+      writeSortOrder(
+        input.collectionId,
+        insertIdAfter(
+          siblings.map((row) => Number(row.id)),
+          input.insertAfterId,
+          id,
+        ),
+      );
+    }
+  });
+  return id;
+}
+
+export function reorderSavedRequests(collectionId: number, orderedIds: number[]): void {
+  if (orderedIds.length === 0) return;
+  withTransaction(() => {
+    writeSortOrder(collectionId, orderedIds);
+  });
 }
 
 export function renameSavedRequest(id: number, name: string): void {

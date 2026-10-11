@@ -1,4 +1,21 @@
 import { useMemo, useRef } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { compareSavedRequestOrder, moveId } from "@shared/requestOrder";
+import { parseRequestMeta } from "@shared/requestMeta";
 import { statusTone } from "../lib/format";
 import type { CollectionRow, HistoryRow, SavedRequestRow } from "@shared/types";
 
@@ -22,13 +39,148 @@ interface SidebarProps {
   onDeleteCollection: (id: number) => void;
   onLoadSaved: (item: SavedRequestRow) => void;
   onRenameSaved: (item: SavedRequestRow) => void;
+  onDuplicateSaved: (item: SavedRequestRow) => void;
+  onToggleRun: (item: SavedRequestRow, enabled: boolean) => void;
   onDeleteSaved: (id: number) => void;
+  onReorderSaved: (collectionId: number, orderedIds: number[]) => void;
+  onRunCollection: (collection: CollectionRow) => void;
+  runningCollectionId: number | null;
   onClearHistory: () => void;
   onLoadHistory: (item: HistoryRow) => void;
 }
 
 function matchesQuery(haystack: string, needle: string): boolean {
   return haystack.toLowerCase().includes(needle);
+}
+
+function dragStyle(
+  transform: { x: number; y: number; scaleX: number; scaleY: number } | null,
+  transition: string | undefined,
+): { transform?: string; transition?: string } {
+  if (!transform) return { transition };
+  return {
+    transform: `translate3d(${transform.x}px, ${transform.y}px, 0) scale(${transform.scaleX}, ${transform.scaleY})`,
+    transition,
+  };
+}
+
+function SortableSavedRow(props: {
+  item: SavedRequestRow;
+  dragDisabled: boolean;
+  active: boolean;
+  onLoad: () => void;
+  onRename: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  runEnabled: boolean;
+  onToggleRun: (enabled: boolean) => void;
+}) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.item.id,
+    disabled: props.dragDisabled,
+  });
+  const rowClass = ["saved-row", isDragging ? "is-dragging" : "", props.runEnabled ? "" : "is-skipped"]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div ref={setNodeRef} style={dragStyle(transform, transition)} className={rowClass}>
+      <button
+        type="button"
+        className="drag-handle"
+        aria-label="拖拽排序"
+        title={props.dragDisabled ? "清除搜索后再排序" : "拖拽排序"}
+        disabled={props.dragDisabled}
+        {...attributes}
+        {...listeners}
+        ref={setActivatorNodeRef}
+      >
+        ⋮⋮
+      </button>
+      <div className="saved-main">
+        <button
+          type="button"
+          className={props.active ? "history-item active" : "history-item"}
+          onClick={props.onLoad}
+          onDoubleClick={(e) => {
+            e.preventDefault();
+            props.onRename();
+          }}
+        >
+          <span className="method">{props.item.method}</span>
+          <span className="history-url">{props.item.name}</span>
+          <span className="history-meta">{props.item.url}</span>
+        </button>
+        <label className="run-toggle" title="关闭后仍留在集合中，集合运行时跳过">
+          <input
+            type="checkbox"
+            checked={props.runEnabled}
+            aria-label={`${props.item.name} 参与运行`}
+            onChange={(e) => props.onToggleRun(e.target.checked)}
+          />
+          参与运行
+        </label>
+      </div>
+      <div className="row-actions">
+        <button type="button" className="ghost" onClick={props.onRename} aria-label="重命名请求" title="重命名">
+          重命名
+        </button>
+        <button type="button" className="ghost" onClick={props.onDuplicate} aria-label="复制请求" title="复制">
+          复制
+        </button>
+        <button type="button" className="ghost" onClick={props.onDelete} aria-label="删除请求">
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CollectionRequestList(props: {
+  collectionId: number;
+  requests: SavedRequestRow[];
+  dragDisabled: boolean;
+  currentSavedId: number | null;
+  onReorder: (collectionId: number, orderedIds: number[]) => void;
+  onLoadSaved: (item: SavedRequestRow) => void;
+  onRenameSaved: (item: SavedRequestRow) => void;
+  onDuplicateSaved: (item: SavedRequestRow) => void;
+  onToggleRun: (item: SavedRequestRow, enabled: boolean) => void;
+  onDeleteSaved: (id: number) => void;
+}) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const ids = props.requests.map((item) => item.id);
+
+  function onDragEnd(event: DragEndEvent) {
+    if (props.dragDisabled) return;
+    const overId = event.over?.id;
+    if (overId == null || event.active.id === overId) return;
+    props.onReorder(props.collectionId, moveId(ids, Number(event.active.id), Number(overId)));
+  }
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+        {props.requests.map((item) => (
+          <SortableSavedRow
+            key={item.id}
+            item={item}
+            dragDisabled={props.dragDisabled}
+            active={item.id === props.currentSavedId}
+            onLoad={() => props.onLoadSaved(item)}
+            onRename={() => props.onRenameSaved(item)}
+            onDuplicate={() => props.onDuplicateSaved(item)}
+            onDelete={() => props.onDeleteSaved(item.id)}
+            runEnabled={parseRequestMeta(item.meta).runEnabled}
+            onToggleRun={(enabled) => props.onToggleRun(item, enabled)}
+          />
+        ))}
+      </SortableContext>
+    </DndContext>
+  );
 }
 
 export function Sidebar(props: SidebarProps) {
@@ -55,11 +207,13 @@ export function Sidebar(props: SidebarProps) {
   }, [props.collections, props.savedRequests, searchNeedle]);
 
   function requestsOf(collectionId: number): SavedRequestRow[] {
-    return props.savedRequests.filter((item) => {
-      if (item.collection_id !== collectionId) return false;
-      if (!searchNeedle) return true;
-      return [item.name, item.method, item.url].some((part) => matchesQuery(part, searchNeedle));
-    });
+    return props.savedRequests
+      .filter((item) => {
+        if (item.collection_id !== collectionId) return false;
+        if (!searchNeedle) return true;
+        return [item.name, item.method, item.url].some((part) => matchesQuery(part, searchNeedle));
+      })
+      .sort(compareSavedRequestOrder);
   }
 
   function isCollectionExpanded(id: number): boolean {
@@ -155,6 +309,14 @@ export function Sidebar(props: SidebarProps) {
                     <button
                       type="button"
                       className="ghost"
+                      disabled={props.runningCollectionId != null}
+                      onClick={() => props.onRunCollection(collection)}
+                    >
+                      {props.runningCollectionId === collection.id ? "运行中" : "运行"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost"
                       onClick={() => props.onExportCollection(collection)}
                     >
                       导出
@@ -177,43 +339,20 @@ export function Sidebar(props: SidebarProps) {
                       ×
                     </button>
                   </div>
-                  {expanded &&
-                    requests.map((item) => (
-                      <div key={item.id} className="saved-row">
-                        <button
-                          type="button"
-                          className={item.id === props.currentSavedId ? "history-item active" : "history-item"}
-                          onClick={() => props.onLoadSaved(item)}
-                          onDoubleClick={(e) => {
-                            e.preventDefault();
-                            props.onRenameSaved(item);
-                          }}
-                        >
-                          <span className="method">{item.method}</span>
-                          <span className="history-url">{item.name}</span>
-                          <span className="history-meta">{item.url}</span>
-                        </button>
-                        <div className="row-actions">
-                          <button
-                            type="button"
-                            className="ghost"
-                            onClick={() => props.onRenameSaved(item)}
-                            aria-label="重命名请求"
-                            title="重命名"
-                          >
-                            重命名
-                          </button>
-                          <button
-                            type="button"
-                            className="ghost"
-                            onClick={() => props.onDeleteSaved(item.id)}
-                            aria-label="删除请求"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      </div>
-                    ))}
+                  {expanded && requests.length > 0 && (
+                    <CollectionRequestList
+                      collectionId={collection.id}
+                      requests={requests}
+                      dragDisabled={Boolean(searchNeedle)}
+                      currentSavedId={props.currentSavedId}
+                      onReorder={props.onReorderSaved}
+                      onLoadSaved={props.onLoadSaved}
+                      onRenameSaved={props.onRenameSaved}
+                      onDuplicateSaved={props.onDuplicateSaved}
+                      onToggleRun={props.onToggleRun}
+                      onDeleteSaved={props.onDeleteSaved}
+                    />
+                  )}
                 </div>
               );
             })}

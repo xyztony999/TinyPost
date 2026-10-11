@@ -28,6 +28,8 @@
     "dist:deb": "bash scripts/pack-deb.sh"
   },
   "dependencies": {
+    "@dnd-kit/core": "6.3.1",
+    "@dnd-kit/sortable": "10.0.0",
     "codemirror": "^5.65.18",
     "sql.js": "^1.12.0"
   },

@@ -80,6 +80,10 @@ export async function deleteSavedRequest(id: number): Promise<void> {
   await api().deleteSavedRequest(id);
 }
 
+export async function reorderSavedRequests(collectionId: number, orderedIds: number[]): Promise<void> {
+  await api().reorderSavedRequests(collectionId, orderedIds);
+}
+
 export async function getSettings(): Promise<AppSettings> {
   return api().getSettings();
 }

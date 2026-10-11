@@ -181,6 +181,7 @@ export interface SavedRequestRow {
   auth: string;
   query: string;
   meta: string;
+  sort_order: number;
   created_at: string;
 }
 
@@ -206,6 +207,7 @@ export interface SaveRequestInput {
   auth: AuthConfig;
   query?: string;
   meta?: string;
+  insertAfterId?: number;
 }
 
 export interface UpsertEnvironmentInput {

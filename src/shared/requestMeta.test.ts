@@ -18,6 +18,7 @@ describe("requestMeta", () => {
         { path: "$.token", variable: "token", enabled: true },
         { path: "", variable: "", enabled: true },
       ],
+      runEnabled: true,
     });
     expect(parseRequestMeta(raw)).toEqual({
       bodyMode: "form-data",
@@ -27,6 +28,7 @@ describe("requestMeta", () => {
       ],
       urlencodedFields: [{ key: "user", value: "ann", enabled: true }],
       extractors: [{ path: "$.token", variable: "token", enabled: true }],
+      runEnabled: true,
     });
   });
 
@@ -36,12 +38,28 @@ describe("requestMeta", () => {
       formFields: [],
       urlencodedFields: [],
       extractors: [],
+      runEnabled: true,
     });
     expect(parseRequestMeta("{")).toEqual({
       bodyMode: "raw",
       formFields: [],
       urlencodedFields: [],
       extractors: [],
+      runEnabled: true,
     });
+  });
+
+  it("缺省 runEnabled 时参与运行，显式关闭后保持关闭", () => {
+    expect(parseRequestMeta(JSON.stringify({ bodyMode: "raw" })).runEnabled).toBe(true);
+    expect(parseRequestMeta("{}").runEnabled).toBe(true);
+    const raw = serializeRequestMeta({
+      bodyMode: "raw",
+      formFields: [],
+      urlencodedFields: [],
+      extractors: [],
+      runEnabled: false,
+    });
+    expect(JSON.parse(raw).runEnabled).toBe(false);
+    expect(parseRequestMeta(raw).runEnabled).toBe(false);
   });
 });

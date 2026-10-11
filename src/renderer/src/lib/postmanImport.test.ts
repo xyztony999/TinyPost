@@ -42,6 +42,60 @@ describe("parsePostmanCollection", () => {
       auth: { type: "bearer", bearerToken: "{{token}}" },
     });
     expect(result.requests[0]?.headers[1]?.enabled).toBe(false);
+    expect(result.requests[0]?.bodyMode).toBe("raw");
+  });
+
+  it("导入 urlencoded 和 form-data，文件路径留空", () => {
+    const result = parsePostmanCollection(
+      JSON.stringify({
+        info: { name: "表单", schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+        item: [
+          {
+            name: "登录",
+            request: {
+              method: "POST",
+              body: {
+                mode: "urlencoded",
+                urlencoded: [
+                  { key: "user", value: "ann" },
+                  { key: "skip", value: "x", disabled: true },
+                ],
+              },
+              url: "http://127.0.0.1/login",
+            },
+          },
+          {
+            name: "上传",
+            request: {
+              method: "POST",
+              body: {
+                mode: "formdata",
+                formdata: [
+                  { key: "note", type: "text", value: "hi" },
+                  { key: "file", type: "file", src: "/tmp/a.txt" },
+                ],
+              },
+              url: "http://127.0.0.1/upload",
+            },
+          },
+        ],
+      }),
+    );
+    expect(result.requests[0]).toMatchObject({
+      bodyMode: "urlencoded",
+      body: "",
+      urlencodedFields: [
+        { key: "user", value: "ann", enabled: true },
+        { key: "skip", value: "x", enabled: false },
+      ],
+    });
+    expect(result.requests[1]).toMatchObject({
+      bodyMode: "form-data",
+      formFields: [
+        { key: "note", type: "text", value: "hi", enabled: true },
+        { key: "file", type: "file", value: "", enabled: true },
+      ],
+    });
   });
 
   it("拒绝环境和空集合", () => {

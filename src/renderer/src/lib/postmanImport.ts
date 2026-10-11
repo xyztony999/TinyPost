@@ -1,4 +1,12 @@
-import type { AuthConfig, HeaderItem, HttpMethod, VariableItem } from "@shared/types";
+import type {
+  AuthConfig,
+  BodyMode,
+  FormField,
+  HeaderItem,
+  HttpMethod,
+  UrlEncodedField,
+  VariableItem,
+} from "@shared/types";
 import { defaultAuth } from "@shared/types";
 
 export interface ImportedRequest {
@@ -8,6 +16,9 @@ export interface ImportedRequest {
   headers: HeaderItem[];
   body: string;
   auth: AuthConfig;
+  bodyMode: BodyMode;
+  formFields: FormField[];
+  urlencodedFields: UrlEncodedField[];
 }
 
 export interface PostmanImportResult {
@@ -37,12 +48,21 @@ interface PostmanAuth {
   apikey?: Array<{ key?: string; value?: string }>;
 }
 
+interface PostmanKeyedValue {
+  key?: string;
+  value?: string;
+  type?: string;
+  disabled?: boolean;
+}
+
 interface PostmanRequest {
   method?: string;
   header?: PostmanHeader[];
   body?: {
     mode?: string;
     raw?: string;
+    urlencoded?: PostmanKeyedValue[];
+    formdata?: PostmanKeyedValue[];
   };
   url?: string | PostmanUrl;
   auth?: PostmanAuth;
@@ -110,6 +130,53 @@ function resolveUrl(url?: string | PostmanUrl): string {
   return query ? `${base}?${query}` : base;
 }
 
+function readPostmanBody(body: PostmanRequest["body"]): {
+  body: string;
+  bodyMode: BodyMode;
+  formFields: FormField[];
+  urlencodedFields: UrlEncodedField[];
+} {
+  const mode = (body?.mode || "").toLowerCase();
+  if (mode === "urlencoded") {
+    return {
+      body: "",
+      bodyMode: "urlencoded",
+      formFields: [],
+      urlencodedFields: (body?.urlencoded || [])
+        .filter((field) => field && field.key)
+        .map((field) => ({
+          key: field.key || "",
+          value: String(field.value ?? ""),
+          enabled: !field.disabled,
+        })),
+    };
+  }
+  if (mode === "formdata") {
+    return {
+      body: "",
+      bodyMode: "form-data",
+      urlencodedFields: [],
+      formFields: (body?.formdata || [])
+        .filter((field) => field && field.key)
+        .map((field) => {
+          const file = (field.type || "").toLowerCase() === "file";
+          return {
+            key: field.key || "",
+            type: file ? "file" : "text",
+            value: file ? "" : String(field.value ?? ""),
+            enabled: !field.disabled,
+          } satisfies FormField;
+        }),
+    };
+  }
+  return {
+    body: body?.raw || "",
+    bodyMode: "raw",
+    formFields: [],
+    urlencodedFields: [],
+  };
+}
+
 function walkItems(
   items: PostmanItem[] | undefined,
   prefix: string,
@@ -138,18 +205,18 @@ function walkItems(
         enabled: !h.disabled,
       }));
 
-    const body =
-      req.body?.mode === "raw" || req.body?.raw
-        ? req.body.raw || ""
-        : "";
+    const parsedBody = readPostmanBody(req.body);
 
     out.push({
       name: pathName,
       method: (req.method || "GET").toUpperCase(),
       url: resolveUrl(req.url),
       headers,
-      body,
+      body: parsedBody.body,
       auth: req.auth ? authFromPostman(req.auth) : collectionAuth,
+      bodyMode: parsedBody.bodyMode,
+      formFields: parsedBody.formFields,
+      urlencodedFields: parsedBody.urlencodedFields,
     });
   }
 }

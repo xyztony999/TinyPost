@@ -674,9 +674,105 @@ button.tab.active {
 
 .saved-row {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   gap: 4px;
   align-items: start;
+}
+
+.saved-row.is-dragging {
+  position: relative;
+  z-index: 2;
+  opacity: 0.85;
+}
+
+.saved-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.saved-row.is-skipped .history-item {
+  opacity: 0.55;
+}
+
+.run-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.saved-main .run-toggle {
+  padding: 0 12px 2px;
+}
+
+.drag-handle {
+  width: 22px;
+  margin-top: 10px;
+  padding: 4px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: grab;
+  letter-spacing: -2px;
+  line-height: 1;
+  touch-action: none;
+}
+
+.drag-handle:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.drag-handle:active:not(:disabled) {
+  cursor: grabbing;
+}
+
+.drag-handle:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.run-report {
+  display: grid;
+  gap: 8px;
+}
+
+.run-report-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.run-step {
+  display: grid;
+  grid-template-columns: 72px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--bg-elevated);
+  border-radius: 12px;
+  padding: 8px 10px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.run-step.stopped {
+  border-color: var(--accent);
 }
 
 .composer-tabs {
