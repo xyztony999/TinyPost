@@ -29,6 +29,8 @@ linux:
       arch: [arm64]
   category: Network
   icon: resources/icon.png
+  executableArgs:
+    - --no-sandbox
   desktop:
     StartupWMClass: tinypost
     Name: TinyPost

@@ -93,11 +93,12 @@ jobs:
         with:
           name: unpacked-arm64
           path: dist-installer/linux-arm64-unpacked/
-      - name: Restore executable bits
+      - name: Restore permissions after artifact download
         run: |
-          find dist-installer/linux-arm64-unpacked -maxdepth 2 -type f | while read -r f; do
+          chmod -R a+rX dist-installer/linux-arm64-unpacked
+          find dist-installer/linux-arm64-unpacked -type f | while read -r f; do
             if head -c 4 "$f" 2>/dev/null | grep -qP '^\x7fELF'; then
-              chmod +x "$f"
+              chmod a+x "$f"
             fi
           done
       - name: Build .deb
