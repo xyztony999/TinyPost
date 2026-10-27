@@ -27,3 +27,6 @@ out
 # Native build
 build/Release
 *.node
+
+# Security scanner local state
+.mimosa/

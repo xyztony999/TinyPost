@@ -1,0 +1,18 @@
+{
+  "apiVersion": 1,
+  "active": "tinypost",
+  "stacks": [],
+  "mounts": [
+    {
+      "layer": "tinypost",
+      "src": "profiles/tinypost/rules/tinypost-business-rules.md",
+      "dst": ".claude/rules/tinypost-business-rules.md",
+      "mode": "copy"
+    }
+  ],
+  "claudemd_imports": [
+    "@profiles/tinypost/CLAUDE.md"
+  ],
+  "created_with": "engine-cli 0.4.0",
+  "ts": "2026-10-27T04:53:19.716Z"
+}
