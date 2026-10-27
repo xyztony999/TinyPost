@@ -974,6 +974,7 @@ function App() {
   }
 
   async function onClearHistory() {
+    if (!window.confirm("清空全部历史记录？")) return;
     await clearHistory();
     setHistory([]);
   }
@@ -1133,6 +1134,8 @@ function App() {
   }
 
   async function onDeleteSavedRequest(id: number) {
+    const item = savedRequests.find((row) => row.id === id);
+    if (item && !window.confirm(`删除请求「${item.name}」？`)) return;
     await deleteSavedRequest(id);
     setSavedRequests(await listSavedRequests());
     if (currentSavedId === id) bindSaved(null);
@@ -1515,6 +1518,12 @@ function App() {
           </label>
         </div>
       </header>
+
+      {insecure && (
+        <div className="insecure-banner" role="alert">
+          已允许不安全证书，TLS 证书校验已关闭——仅建议用于内网自签环境
+        </div>
+      )}
 
       <div className="layout">
         <Sidebar

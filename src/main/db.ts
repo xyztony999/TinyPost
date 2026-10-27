@@ -263,8 +263,10 @@ export function ensureDefaultEnvironment(): EnvironmentRow[] {
 }
 
 export function setActiveEnvironment(id: number): void {
-  run("UPDATE environments SET is_active = 0");
-  run("UPDATE environments SET is_active = 1 WHERE id = ?", [id]);
+  withTransaction(() => {
+    getDb().run("UPDATE environments SET is_active = 0");
+    getDb().run("UPDATE environments SET is_active = 1 WHERE id = ?", [id]);
+  });
 }
 
 export function upsertEnvironment(input: UpsertEnvironmentInput): number {
@@ -300,6 +302,9 @@ export function upsertEnvironment(input: UpsertEnvironmentInput): number {
 }
 
 export function deleteEnvironment(id: number): void {
+  if (listEnvironments().length <= 1) {
+    throw new Error("至少保留一个环境");
+  }
   run("DELETE FROM environments WHERE id = ?", [id]);
   const remaining = listEnvironments();
   if (remaining.length > 0 && !remaining.some((e) => e.is_active === 1)) {
@@ -314,16 +319,24 @@ export function listCollections(): CollectionRow[] {
 }
 
 export function createCollection(name: string): number {
-  return run(`INSERT INTO collections (name) VALUES (?)`, [name]);
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("集合名称不能为空");
+  return run(`INSERT INTO collections (name) VALUES (?)`, [trimmed]);
 }
 
 export function renameCollection(id: number, name: string): void {
-  run("UPDATE collections SET name = ? WHERE id = ?", [name, id]);
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("集合名称不能为空");
+  const exists = queryAll<{ id: number }>("SELECT id FROM collections WHERE id = ?", [id]);
+  if (exists.length === 0) throw new Error("目标集合不存在");
+  run("UPDATE collections SET name = ? WHERE id = ?", [trimmed, id]);
 }
 
 export function deleteCollection(id: number): void {
-  run("DELETE FROM saved_requests WHERE collection_id = ?", [id]);
-  run("DELETE FROM collections WHERE id = ?", [id]);
+  withTransaction(() => {
+    getDb().run("DELETE FROM saved_requests WHERE collection_id = ?", [id]);
+    getDb().run("DELETE FROM collections WHERE id = ?", [id]);
+  });
 }
 
 export function listSavedRequests(collectionId?: number): SavedRequestRow[] {
@@ -412,6 +425,16 @@ export function saveRequest(input: SaveRequestInput): number {
 
 export function reorderSavedRequests(collectionId: number, orderedIds: number[]): void {
   if (orderedIds.length === 0) return;
+  const existing = queryAll<{ id: number }>(
+    "SELECT id FROM saved_requests WHERE collection_id = ?",
+    [collectionId],
+  );
+  if (
+    existing.length !== orderedIds.length ||
+    !orderedIds.every((id) => existing.some((row) => Number(row.id) === id))
+  ) {
+    throw new Error("orderedIds 与集合内请求项不一致");
+  }
   withTransaction(() => {
     writeSortOrder(collectionId, orderedIds);
   });

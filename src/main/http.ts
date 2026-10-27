@@ -114,8 +114,10 @@ function loadTls(tls: TlsRequestConfig | undefined, isHttps: boolean): TlsMateri
   };
 }
 
-export function httpCancel(requestId = "default"): boolean {
-  const slot = inflight.get(requestId);
+export function httpCancel(requestId?: string): boolean {
+  const target = requestId || [...inflight.keys()].at(-1);
+  if (!target) return false;
+  const slot = inflight.get(target);
   if (!slot) return false;
   slot.cancelled = true;
   if (slot.req) {
