@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { CodeEditor } from "./CodeEditor";
 import { editorLanguage } from "../lib/format";
 import type {
@@ -481,6 +482,14 @@ interface CurlImportDialogProps {
 }
 
 export function CurlImportDialog(props: CurlImportDialogProps) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") props.onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [props.onClose]);
+
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div

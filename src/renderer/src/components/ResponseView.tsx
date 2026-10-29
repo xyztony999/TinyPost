@@ -149,7 +149,7 @@ export function ResponseView(props: ResponseViewProps) {
                 className={step.stopped ? "run-step stopped" : "run-step"}
                 onClick={() => props.onOpenRunStep(step.savedId)}
               >
-                <span className="method">{step.method}</span>
+                <span className="method" data-method={step.method}>{step.method}</span>
                 <span className="history-url">{step.name}</span>
                 <span className="history-meta">
                   {step.error ? (

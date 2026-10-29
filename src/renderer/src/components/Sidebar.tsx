@@ -107,7 +107,7 @@ function SortableSavedRow(props: {
             props.onRename();
           }}
         >
-          <span className="method">{props.item.method}</span>
+          <span className="method" data-method={props.item.method}>{props.item.method}</span>
           <span className="history-url">{props.item.name}</span>
           <span className="history-meta">{props.item.url}</span>
         </button>
@@ -378,7 +378,7 @@ export function Sidebar(props: SidebarProps) {
                 className="history-item"
                 onClick={() => props.onLoadHistory(item)}
               >
-                <span className="method">{item.method}</span>
+                <span className="method" data-method={item.method}>{item.method}</span>
                 <span className="history-url">{item.url}</span>
                 <span className="history-meta">
                   <span className={`status-badge compact tone-${statusTone(item.status)}`}>

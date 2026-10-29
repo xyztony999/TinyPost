@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { CookieJar, StoredCookie } from "@shared/cookies";
 import type { TlsConfig, VariableItem } from "@shared/types";
 
@@ -25,6 +26,14 @@ interface EnvEditorProps {
 }
 
 export function EnvEditor(props: EnvEditorProps) {
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") props.onClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [props.onClose]);
+
   return (
     <div className="modal-backdrop" onClick={props.onClose}>
       <div
