@@ -10,12 +10,12 @@ pipeline:
     title: "D1 架构三文档（BA/AA/FL）"
     path: "00-architecture/"
     status: complete
-    note: "v1.1（复核修复：附录A同步/SS编码/树展开/失败语义）"
+    note: "v2.0（2026-11-11 领域重划分：三段式 L2 骨架，S-03 并入 S-02 更名环境与执行上下文；结构核对/守门全过）"
   - id: d2-prd
     title: "D2 PRD 与领域模型"
     path: "02-detailed/prd/"
     status: complete
-    note: "v1.1（复核修复：完备性口径 ✅11+N/A3、领域分层、子流程偏差声明）"
+    note: "v1.2（2026-11-11 随 D1 v2.0 同步模块口径；聚合结构不变）"
   - id: d3-api
     title: "D3 IPC 契约设计"
     path: "02-detailed/api/"
@@ -64,7 +64,7 @@ modules:
   - name: tinypost
     domain: core
     stages:
-      requirement: { status: complete, note: "D0-D2 v1.1（2026-10-27 复核修复）" }
+      requirement: { status: complete, note: "D0-D2（2026-11-11 领域重划分：BA/AA/FL v2.0、PRD/领域模型 v1.2、枚举池/知识库同步）" }
       api: { status: complete, note: "D3 v1.1：27 通道契约与实现对齐" }
       interaction: { status: complete, note: "D4 v1.1 as-built" }
       backend: { status: complete, note: "主进程修复完成：事务化×2/守卫/校验/cancel 语义（2026-10-27）；本项目无独立后端服务" }

@@ -14,7 +14,7 @@
 | 通道 | 语义 | 消费模块 |
 |------|------|---------|
 | `db:saveHistory` / `db:listHistory` / `db:clearHistory` | 历史写入/倒序列出/清空 | 历史记录 |
-| `db:ensureDefaultEnvironment` / `db:listEnvironments` / `db:setActiveEnvironment` / `db:upsertEnvironment` / `db:deleteEnvironment` | 环境全生命周期 + 激活切换 | 环境与变量、会话保持 |
+| `db:ensureDefaultEnvironment` / `db:listEnvironments` / `db:setActiveEnvironment` / `db:upsertEnvironment` / `db:deleteEnvironment` | 环境全生命周期 + 激活切换 | 环境与执行上下文 |
 | `db:listCollections` / `db:createCollection` / `db:renameCollection` / `db:deleteCollection` | 集合增删改名 | 集合管理 |
 | `db:listSavedRequests` / `db:saveRequest` / `db:renameSavedRequest` / `db:deleteSavedRequest` / `db:reorderSavedRequests` | 请求项 CRUD + 拖拽排序落库 | 集合管理 |
 | `db:getSettings` / `db:saveSettings` | 应用设置读写 | 应用设置 |

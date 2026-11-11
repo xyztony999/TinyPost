@@ -10,6 +10,7 @@
 | 集合 | 一组有序请求的容器，用于组织接口（如「登录链路」「用户模块」） | `CollectionRow` |
 | 请求项 | 集合内的单个请求及其排序（可拖拽排序、可标记不参与运行） | `SavedRequestRow.sort_order`、meta.runEnabled |
 | 环境 | 一套命名变量 + TLS 客户端证书 + Cookie 罐的具名组合（如 dev/prod），同一时刻仅一个激活 | `EnvironmentRow` |
+| 执行上下文 | 激活环境在执行时刻提供的变量取值、Cookie 罐与 TLS 证书组合，随激活整体切换 | `EnvironmentRow`（variables/tls/cookies 列） |
 | 变量 | `{{key}}` 形式的模板变量，来自激活环境，渲染进 URL/Header/Body | `VariableItem`、lib/vars.ts |
 | 历史 | 每次实际发出的请求/响应快照，本地持久化，可回放 | `HistoryRow`、request_history 表 |
 | 提取规则 | 从响应中按 JSONPath 抽值写入环境变量的规则（token 提取） | `ExtractRule`、shared/jsonpath.ts |
@@ -26,8 +27,7 @@
 | 历史记录 | 自动保存每次发送的完整快照，按时间倒序浏览、一键回填到编辑器、清空 |
 | 集合管理 | 集合的增删改名；集合内请求项的保存、改名、删除、拖拽排序 |
 | 集合运行 | 按序执行集合内参与运行的请求（可逐项关闭），任一步失败即中止；用于内网登录链路编排与离线回放 |
-| 环境与变量 | 环境的增删改查与激活切换；`{{var}}` 渲染；提取规则把响应值写回环境（token 链） |
-| 会话保持 | 每环境独立 Cookie 罐，自动收集 Set-Cookie 并在后续请求携带；TLS 客户端证书配置 |
+| 环境与执行上下文 | 环境的增删改查与激活切换；`{{var}}` 渲染；提取规则把响应值写回环境（token 链）；每环境独立 Cookie 罐，自动收集 Set-Cookie 并在后续请求携带；TLS 客户端证书配置（原「环境与变量」+「会话保持」，2026-11-11 领域重划分合并，S-03 废弃） |
 | 导入导出 | Postman Collection v2.1 导入、cURL 导入、便携备份文件（备份/恢复整库） |
 | 应用设置 | 超时、跳过 TLS 校验开关、跟随重定向；跟随系统的明暗主题 |
 
